@@ -1,0 +1,15 @@
+# One-click demo deploy on Render (Blueprint). DEV_OTP shows login codes on screen: demo only, never for real data.
+services:
+  - type: web
+    name: rapid-entry-demo
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk: { name: data, mountPath: /data, sizeGB: 1 }
+    envVars:
+      - { key: DEV_OTP, value: "1" }
+      - { key: SEED_DEMO, value: "1" }
+      - { key: ADMIN_MOBILE, value: "9000000000" }
+      - { key: MOCK_FRAPPE_ADDR, value: ":8099" }
+      - { key: COOKIE_SECURE, value: "1" }
+      - { key: ADDR, value: ":10000" }
