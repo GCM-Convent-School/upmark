@@ -24,10 +24,10 @@ async function cookieFor(id) {
     const pg = await (await browser.newContext({ viewport: { width: 1100, height: 800 } })).newPage();
     pg.on('pageerror', (e) => { fail++; console.log('  FAIL page error: ' + e.message); }); pg.on('dialog', (d) => d.accept());
     await pg.goto(BASE); await pg.fill('input', id); await pg.click('text=Send code');
-    await pg.fill('input', await pg.locator('.banner b').innerText()); await pg.click('text=Verify & sign in'); await pg.waitForSelector('#new'); return pg;
+    await pg.fill('input', await pg.locator('.banner b').innerText()); await pg.click('text=Verify & sign in'); await pg.waitForSelector('.side'); return pg;
   };
   const t = await login('9000000001');
-  await t.locator('.card', { hasText: 'SA2' }).locator('text=View').click(); await t.waitForSelector('#prog');
+  await t.locator('.li', { hasText: 'SA2' }).locator('button').click(); await t.waitForSelector('#prog');
   ok(await t.locator('text=🔒 Locked').count() === 1 && (await t.locator('#tbl input:not(:disabled)').count()) === 0, 'Locked test is read-only for the teacher (no editable inputs, no Save/Finalize)');
   ok((await t.locator('text=Finalize & Lock').count()) === 0, 'No global unlock / finalize controls on a locked test');
   await t.locator('#tbl tbody tr', { has: t.locator('td:text-is("14")') }).click();
@@ -41,7 +41,7 @@ async function cookieFor(id) {
   ok(await t.locator('tr:has(td:text-is("14")) .badge', { hasText: 'correction pending' }).count() === 1, 'Row shows "correction pending"');
 
   const a = await login('9000000000');
-  await a.click('text=Admin Console'); await a.click('text=Corrections'); await a.waitForSelector('text=Correction requests inbox');
+  await a.click('button.nav:has-text("Corrections")'); await a.waitForSelector('text=Correction requests inbox');
   const card = a.locator('.card', { hasText: 'Question 7 marks' });
   ok((await card.innerText()).includes('42 → 47'), 'Admin inbox shows old → proposed value with reason');
   await a.screenshot({ path: '/tmp/shots/c2-inbox.png' });
@@ -51,7 +51,7 @@ async function cookieFor(id) {
   let doc;
   for (let i = 0; i < 30 && !doc; i++) { await sleep(400); const rs = await (await fetch(MOCK + '/__dump?doctype=Assessment%20Result')).json(); doc = rs.find((r) => r.student === 'STU-8A-014' && r.docstatus === 1 && r.details[0].score === 47); }
   ok(!!doc, 'Frappe Assessment Result for Roll 14 now 47 (amended: ' + (doc && doc.name) + ')');
-  await a.click('text=Marks Explorer'); await a.locator('tr', { hasText: 'SA2' }).locator('text=Timeline').click();
+  await a.click('button.nav:has-text("Marks Explorer")'); await a.locator('tr', { hasText: 'SA2' }).locator('text=Timeline').click();
   await a.waitForSelector('.tl .ev');
   const tl = await a.locator('.tl .ev b').allInnerTexts();
   ok(['Test created', 'Finalized & locked', 'Correction requested', 'Correction approved', 'Correction re-synced to ERP'].every((x) => tl.includes(x)), 'Timeline chain: ' + tl.join(' → '));

@@ -16,6 +16,15 @@ DEV_OTP=1 SEED_DEMO=1 ADMIN_MOBILE=9000000000 MOCK_FRAPPE_ADDR=:8099 ./rapid-ent
 
 Tests (need Node + Playwright for the `ui-*` suites): `tests/run-all.sh` — each suite gets a fresh DB and mock Frappe.
 
+## Spaces
+
+The app is branded **GCM UPMARK** and has two separate spaces behind the same OTP login (sidebar on the left, topics as nav items):
+
+* **Teacher space** (lime accent): Dashboard, New / Open Test (class → section → category → test → date → subject), All Tests, My Drafts.
+* **Admin space** (violet accent): Dashboard, Marks Explorer (class / section / teacher / status filters), Corrections, Classes & Sections, Teacher Allocation (class → section → teacher per subject), Teachers, Frappe Sync.
+
+Routing is by role on both the client and the API (`/api/admin/*` returns 403 for teachers).
+
 ## Configuration (environment)
 
 | Variable | Purpose |

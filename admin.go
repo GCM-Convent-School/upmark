@@ -11,6 +11,9 @@ import (
 func (a *App) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/overview", a.wrap("admin", a.adminOverview))
 	mux.HandleFunc("GET /api/admin/exams", a.wrap("admin", a.adminExams))
+	mux.HandleFunc("GET /api/admin/classes", a.wrap("admin", a.adminClasses))
+	mux.HandleFunc("GET /api/admin/allocations", a.wrap("admin", a.adminAllocMatrix))
+	mux.HandleFunc("PUT /api/admin/allocations/assign", a.wrap("admin", a.adminAllocAssign))
 	mux.HandleFunc("GET /api/admin/users", a.wrap("admin", a.adminUsers))
 	mux.HandleFunc("POST /api/admin/users", a.wrap("admin", a.adminUserCreate))
 	mux.HandleFunc("PUT /api/admin/users/{id}", a.wrap("admin", a.adminUserUpdate))
@@ -76,7 +79,12 @@ func (a *App) setSetting(k, v string) {
 func (a *App) adminExams(w http.ResponseWriter, r *http.Request, u *User) error {
 	q := r.URL.Query()
 	where, args := []string{"1=1"}, []any{}
-	if v := q.Get("class"); v != "" {
+	if v := q.Get("class_name"); v != "" {
+		where, args = append(where, "e.class_name=?"), append(args, v)
+		if sec := q.Get("section"); sec != "" {
+			where, args = append(where, "e.section=?"), append(args, sec)
+		}
+	} else if v := q.Get("class"); v != "" {
 		c, s := splitGroup(v)
 		where, args = append(where, "e.class_name=? AND e.section=?"), append(args, c, s)
 	}
@@ -373,5 +381,132 @@ func (a *App) adminCorrectionDecide(w http.ResponseWriter, r *http.Request, u *U
 	}
 	a.wake()
 	writeJSON(w, 200, map[string]any{"ok": true, "state": st})
+	return nil
+}
+
+// adminClasses summarises every class/section: roster size, tests and teacher coverage.
+func (a *App) adminClasses(w http.ResponseWriter, r *http.Request, u *User) error {
+	rows, err := a.db.Query(`SELECT class_name, section, COUNT(*) FROM students WHERE active=1 GROUP BY class_name, section ORDER BY class_name, section`)
+	if err != nil {
+		return err
+	}
+	type grp struct {
+		ClassName string `json:"class_name"`
+		Section   string `json:"section"`
+		Label     string `json:"label"`
+		Students  int    `json:"students"`
+		Drafts    int    `json:"drafts"`
+		Locked    int    `json:"locked"`
+		Teachers  int    `json:"teachers"`
+		Subjects  int    `json:"subjects"`
+	}
+	var list []grp
+	for rows.Next() {
+		var g grp
+		rows.Scan(&g.ClassName, &g.Section, &g.Students)
+		g.Label = groupLabel(g.ClassName, g.Section)
+		list = append(list, g)
+	}
+	rows.Close()
+	for i := range list {
+		g := &list[i]
+		a.db.QueryRow(`SELECT COALESCE(SUM(status='draft'),0), COALESCE(SUM(status='locked'),0) FROM exams WHERE class_name=? AND section=?`, g.ClassName, g.Section).Scan(&g.Drafts, &g.Locked)
+		a.db.QueryRow(`SELECT COUNT(DISTINCT user_id), COUNT(DISTINCT subject) FROM allocations al JOIN users u ON u.id=al.user_id AND u.active=1 WHERE class_name=? AND section=?`, g.ClassName, g.Section).Scan(&g.Teachers, &g.Subjects)
+	}
+	if list == nil {
+		list = []grp{}
+	}
+	writeJSON(w, 200, map[string]any{"classes": list})
+	return nil
+}
+
+// adminAllocMatrix returns, for one class/section, each subject with the teachers assigned to it.
+func (a *App) adminAllocMatrix(w http.ResponseWriter, r *http.Request, u *User) error {
+	class, section := r.URL.Query().Get("class_name"), r.URL.Query().Get("section")
+	if class == "" {
+		return bad("class_name is required")
+	}
+	type teacher struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	type subj struct {
+		Subject  string    `json:"subject"`
+		Teachers []teacher `json:"teachers"`
+	}
+	rows, err := a.db.Query(`SELECT c.name, COALESCE(u.id,0), COALESCE(u.name,'') FROM courses c
+		LEFT JOIN allocations al ON al.subject=c.name AND al.class_name=? AND al.section=?
+		LEFT JOIN users u ON u.id=al.user_id AND u.active=1 ORDER BY c.name, u.name`, class, section)
+	if err != nil {
+		return err
+	}
+	var subjects []subj
+	for rows.Next() {
+		var name, tn string
+		var tid int64
+		rows.Scan(&name, &tid, &tn)
+		if len(subjects) == 0 || subjects[len(subjects)-1].Subject != name {
+			subjects = append(subjects, subj{Subject: name, Teachers: []teacher{}})
+		}
+		if tid != 0 {
+			s := &subjects[len(subjects)-1]
+			s.Teachers = append(s.Teachers, teacher{tid, tn})
+		}
+	}
+	rows.Close()
+	tr, err := a.db.Query(`SELECT id, name FROM users WHERE role='teacher' AND active=1 ORDER BY name`)
+	if err != nil {
+		return err
+	}
+	defer tr.Close()
+	teachers := []teacher{}
+	for tr.Next() {
+		var t teacher
+		tr.Scan(&t.ID, &t.Name)
+		teachers = append(teachers, t)
+	}
+	if subjects == nil {
+		subjects = []subj{}
+	}
+	roster, _ := a.rosterFor(class, section)
+	writeJSON(w, 200, map[string]any{"subjects": subjects, "teachers": teachers, "students": len(roster)})
+	return nil
+}
+
+// adminAllocAssign assigns or revokes one (class, section, subject) for one teacher.
+func (a *App) adminAllocAssign(w http.ResponseWriter, r *http.Request, u *User) error {
+	var in struct {
+		ClassName string `json:"class_name"`
+		Section   string `json:"section"`
+		Subject   string `json:"subject"`
+		UserID    int64  `json:"user_id"`
+		Assigned  bool   `json:"assigned"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	var n int
+	a.db.QueryRow(`SELECT COUNT(*) FROM students WHERE class_name=? AND section=? AND active=1`, in.ClassName, in.Section).Scan(&n)
+	if n == 0 {
+		return bad("Unknown class / section")
+	}
+	a.db.QueryRow(`SELECT COUNT(*) FROM courses WHERE name=?`, in.Subject).Scan(&n)
+	if n == 0 {
+		return bad("Unknown subject")
+	}
+	a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id=? AND role='teacher' AND active=1`, in.UserID).Scan(&n)
+	if n == 0 {
+		return bad("Unknown teacher")
+	}
+	var err error
+	if in.Assigned {
+		_, err = a.db.Exec(`INSERT OR IGNORE INTO allocations(user_id,class_name,section,subject,source) VALUES(?,?,?,?,'manual')`, in.UserID, in.ClassName, in.Section, in.Subject)
+	} else {
+		_, err = a.db.Exec(`DELETE FROM allocations WHERE user_id=? AND class_name=? AND section=? AND subject=?`, in.UserID, in.ClassName, in.Section, in.Subject)
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 	return nil
 }

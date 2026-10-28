@@ -87,6 +87,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/scope", a.wrap("", a.apiScope))
 	mux.HandleFunc("POST /api/exams/resolve", a.wrap("", func(w http.ResponseWriter, r *http.Request, u *User) error { return a.apiExamOpen(w, r, u, false) }))
 	mux.HandleFunc("POST /api/exams", a.wrap("", func(w http.ResponseWriter, r *http.Request, u *User) error { return a.apiExamOpen(w, r, u, true) }))
+	mux.HandleFunc("GET /api/exams", a.wrap("", a.apiExamList))
 	mux.HandleFunc("GET /api/exams/{id}", a.wrap("", a.apiExamGet))
 	mux.HandleFunc("PUT /api/exams/{id}/marks", a.wrap("", a.apiSaveMarks))
 	mux.HandleFunc("POST /api/exams/{id}/finalize", a.wrap("", a.apiFinalize))
@@ -181,23 +182,56 @@ func (a *App) apiScope(w http.ResponseWriter, r *http.Request, u *User) error {
 	return nil
 }
 
+// scopedWhere restricts exam queries to what the user may see (everything for admins).
+func scopedWhere(u *User) (string, []any) {
+	if u.IsAdmin() {
+		return "1=1", nil
+	}
+	return `EXISTS(SELECT 1 FROM exam_subjects s JOIN allocations al ON al.user_id=? AND al.class_name=e.class_name
+		AND al.section=e.section AND al.subject=s.subject WHERE s.exam_id=e.id)`, []any{u.ID}
+}
+
 func (a *App) apiMe(w http.ResponseWriter, r *http.Request, u *User) error {
 	exams, err := a.listExams(`e.owner_id=? AND e.status='draft'`, u.ID)
 	if err != nil {
 		return err
 	}
-	// recent tests in the teacher's scope (own + shared), newest first
-	var recent []Exam
-	if u.IsAdmin() {
-		recent, err = a.listExams(`1=1 ORDER BY e.id DESC LIMIT 15`)
-	} else {
-		recent, err = a.listExams(`EXISTS(SELECT 1 FROM exam_subjects s JOIN allocations al ON al.user_id=? AND al.class_name=e.class_name
-			AND al.section=e.section AND al.subject=s.subject WHERE s.exam_id=e.id) ORDER BY e.id DESC LIMIT 15`, u.ID)
-	}
+	where, args := scopedWhere(u)
+	recent, err := a.listExams(where+" ORDER BY e.id DESC LIMIT 8", args...)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"user": u, "drafts": exams, "draft_limit": 2, "recent": recent})
+	var classes, subjects, locked, pendingCorr int
+	a.db.QueryRow(`SELECT COUNT(DISTINCT class_name||'|'||section), COUNT(*) FROM allocations WHERE user_id=?`, u.ID).Scan(&classes, &subjects)
+	a.db.QueryRow(`SELECT COUNT(*) FROM exams e WHERE e.status='locked' AND `+where, args...).Scan(&locked)
+	a.db.QueryRow(`SELECT COUNT(*) FROM corrections WHERE requested_by=? AND state='pending'`, u.ID).Scan(&pendingCorr)
+	stats := map[string]int{"classes": classes, "subjects": subjects, "drafts": len(exams), "locked": locked, "pending_corrections": pendingCorr}
+	writeJSON(w, 200, map[string]any{"user": u, "drafts": exams, "draft_limit": 2, "recent": recent, "stats": stats})
+	return nil
+}
+
+// apiExamList lists every test the user may see, optionally filtered by status and a text query.
+func (a *App) apiExamList(w http.ResponseWriter, r *http.Request, u *User) error {
+	where, args := scopedWhere(u)
+	if st := r.URL.Query().Get("status"); st == "draft" || st == "locked" {
+		where, args = where+" AND e.status=?", append(args, st)
+	}
+	exams, err := a.listExams(where+" ORDER BY e.id DESC LIMIT 300", args...)
+	if err != nil {
+		return err
+	}
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	out := []map[string]any{}
+	for _, e := range exams {
+		if q != "" && !strings.Contains(strings.ToLower(e.Label+" "+e.OwnerName+" "+e.Topic), q) {
+			continue
+		}
+		var graded, total int
+		a.db.QueryRow(`SELECT COUNT(*) FROM results WHERE exam_id=?`, e.ID).Scan(&graded)
+		a.db.QueryRow(`SELECT COUNT(*)*? FROM students WHERE class_name=? AND section=? AND active=1`, len(e.Subjects), e.ClassName, e.Section).Scan(&total)
+		out = append(out, map[string]any{"exam": e, "graded": graded, "total": total, "sync": a.syncHealth(e.ID, e.Status)})
+	}
+	writeJSON(w, 200, map[string]any{"exams": out})
 	return nil
 }
 

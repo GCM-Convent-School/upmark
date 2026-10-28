@@ -119,6 +119,23 @@ const amended = results.find((x) => x.student === 'STU-8A-' + String(14).padStar
 ok(amended && amended.details[0].score === newTheory && amended.amended_from, 'Frappe: roll 14 amended (cancel + new submitted doc) with new score');
 ok(results.filter((x) => x.docstatus === 2).length === 1, 'Exactly one Assessment Result cancelled (surgical)');
 
+console.log('Dashboards, class/section/teacher allocation API');
+const me = (await A('GET', '/me')).data;
+ok(me.stats.classes === 2 && me.stats.subjects >= 4 && me.stats.locked >= 1, 'Teacher dashboard stats: ' + JSON.stringify(me.stats));
+const lst = (await B('GET', '/exams')).data.exams;
+ok(lst.every((r) => r.exam.subjects.some((s) => ['English', 'Science', 'Hindi'].includes(s))), 'Teacher B test list contains only tests in B\'s own subjects (' + lst.length + ')');
+ok((await B('GET', '/admin/classes')).status === 403, 'Teacher cannot read admin class overview');
+const cls = (await admin('GET', '/admin/classes')).data.classes;
+ok(cls.length === 2 && cls.find((c) => c.label === 'Grade 8-A').students >= 35, 'Admin class overview lists sections with counts');
+const mx = (await admin('GET', '/admin/allocations?class_name=Grade%208&section=A')).data;
+ok(mx.subjects.find((s) => s.subject === 'Punjabi').teachers.length === 1 && mx.teachers.length >= 2, 'Allocation matrix: Punjabi -> 1 teacher');
+const tb = mx.teachers.find((t) => t.name.startsWith('Teacher B'));
+ok((await admin('PUT', '/admin/allocations/assign', { class_name: 'Grade 8', section: 'A', subject: 'Punjabi', user_id: tb.id, assigned: true })).status === 200, 'Admin assigns Teacher B to Punjabi');
+ok((await B('GET', '/scope')).data.groups.some((g) => g.subjects.includes('Punjabi')), 'Teacher B now sees Punjabi (selection takes effect immediately)');
+ok((await admin('PUT', '/admin/allocations/assign', { class_name: 'Grade 8', section: 'A', subject: 'Punjabi', user_id: tb.id, assigned: false })).status === 200 && !(await B('GET', '/scope')).data.groups.some((g) => g.subjects.includes('Punjabi')), 'Revoking removes access again');
+ok((await admin('PUT', '/admin/allocations/assign', { class_name: 'Nope', section: 'Z', subject: 'Punjabi', user_id: tb.id, assigned: true })).status === 400, 'Unknown class/section rejected');
+ok((await A('PUT', '/admin/allocations/assign', { class_name: 'Grade 8', section: 'A', subject: 'Punjabi', user_id: tb.id, assigned: true })).status === 403, 'Teacher cannot assign teachers');
+
 console.log('Master sync & sync health');
 await mock('/__addstudent', { Group: 'Grade 8-A', ID: 'STU-8A-NEW', Name: 'Zara Newcomer', Roll: '36', Admission: 'ADM999999' });
 const t0 = Date.now(); r = await admin('POST', '/admin/sync/master', {}); const dt = Date.now() - t0;

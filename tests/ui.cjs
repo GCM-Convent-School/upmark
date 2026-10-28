@@ -18,10 +18,10 @@ const shot = (p, n) => p.screenshot({ path: '/tmp/shots/' + n + '.png' });
   await page.fill('input', '9000000001'); await page.click('text=Send code');
   const code = await page.locator('.banner b').innerText();
   await page.fill('input', code); await page.click('text=Verify & sign in');
-  await page.waitForSelector('text=New / Open Test'); ok(true, 'OTP login lands on home'); await shot(page, '1-home');
+  await page.waitForSelector('#new'); ok(true, 'OTP login lands on the teacher dashboard'); ok((await page.locator('.brand b').first().innerText()) === 'GCM UPMARK', 'Sidebar brand reads GCM UPMARK'); await shot(page, '1-home');
 
   console.log('Cascade');
-  await page.click('#new'); await page.click('button.pill:has-text("Grade 8-A")');
+  await page.click('#new'); await page.click('button.pill:text-is("Grade 8")'); await page.click('button.pill:has-text("35 students")');
   await page.click('button.pill:has-text("Formative")'); await page.click('button.pill:has-text("FA2")');
   await page.click('button.pill:has-text("Today")'); await shot(page, '2-subject');
   const subs = await page.locator('.pills .pill').allInnerTexts();
@@ -68,7 +68,7 @@ const shot = (p, n) => p.screenshot({ path: '/tmp/shots/' + n + '.png' });
   ok(unsaved >= 5, unsaved + ' entries mirrored to localStorage before any Save');
   await page.close(); // simulate tab being killed
   const p2 = await ctx.newPage(); p2.on('dialog', (d) => d.accept());
-  await p2.goto(BASE + '/'); await p2.waitForSelector('text=New / Open Test');
+  await p2.goto(BASE + '/'); await p2.waitForSelector('#new');
   await p2.click('text=Continue'); await p2.waitForSelector('#prog');
   await p2.click('[aria-label="Table view"]');
   const rec = await p2.$$eval('#tbl tbody tr', (rs) => Object.fromEntries(rs.map((r) => [r.children[0].textContent, r.querySelector('input').value])));
