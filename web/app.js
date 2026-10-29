@@ -57,6 +57,7 @@ const isAdmin = () => S.me && S.me.role === 'admin';
 const ICONS = {
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
   plus: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 8v8M8 12h8',
+  chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
   users: 'M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM21 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
@@ -85,11 +86,11 @@ window.addEventListener('hashchange', () => { if (S.me) render(); });
 
 const NAV = {
   teacher: () => [
-    { sec: 'WORKSPACE', items: [['dashboard', 'Dashboard', 'grid'], ['new', 'New / Open Test', 'plus'], ['tests', 'All Tests', 'list'], ['drafts', 'My Drafts', 'clock', S.data && S.data.stats.drafts]] },
+    { sec: 'WORKSPACE', items: [['dashboard', 'Dashboard', 'grid'], ['new', 'New / Open Test', 'plus'], ['classes', 'My Classes', 'school'], ['tests', 'All Tests', 'list'], ['drafts', 'My Drafts', 'clock', S.data && S.data.stats.drafts]] },
   ],
   admin: () => [
-    { sec: 'WORKSPACE', items: [['a/dashboard', 'Dashboard', 'grid'], ['a/marks', 'Marks Explorer', 'list'], ['a/corrections', 'Corrections', 'inbox', S.counts && S.counts.counts.pending_corrections]] },
-    { sec: 'SCHOOL', items: [['a/classes', 'Classes & Sections', 'school'], ['a/allocations', 'Teacher Allocation', 'layers'], ['a/teachers', 'Teachers', 'users']] },
+    { sec: 'WORKSPACE', items: [['a/dashboard', 'Dashboard', 'grid'], ['a/marks', 'Marks Explorer', 'list'], ['a/approvals', 'Approvals', 'inbox', S.counts && S.counts.counts.pending_approvals], ['a/analysis', 'Weekly Analysis', 'chart'], ['a/corrections', 'Corrections', 'inbox', S.counts && S.counts.counts.pending_corrections]] },
+    { sec: 'SCHOOL', items: [['a/classes', 'Classes & Sections', 'school'], ['a/students', 'Students', 'users'], ['a/allocations', 'Teacher Allocation', 'layers'], ['a/teachers', 'Teachers', 'users']] },
     { sec: 'ERP', items: [['a/sync', 'Frappe Sync', 'refresh']] },
   ],
 };
@@ -132,8 +133,8 @@ async function render() {
     const r = rawRoute();
     if (r.startsWith('exam/')) return openExam(+r.slice(5), { noPush: true });
     const pages = isAdmin()
-      ? { 'a/marks': pgAdminMarks, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync }
-      : { new: () => viewCascade('class'), tests: () => pgTests(''), drafts: () => pgTests('draft') };
+      ? { 'a/marks': pgAdminMarks, 'a/approvals': pgAdminApprovals, 'a/analysis': pgAdminAnalysis, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/students': pgAdminStudents, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync }
+      : { classes: pgClasses, new: () => viewCascade('class'), tests: () => pgTests(''), drafts: () => pgTests('draft') };
     const fn = pages[r] || (isAdmin() ? pgAdminDashboard : pgDashboard);
     await fn();
   } catch (e) { if (S.me) shellMount({ title: 'Something went wrong', content: h('div', { class: 'banner bad' }, e.message) }); }
@@ -142,26 +143,76 @@ async function render() {
 // ---------- login ----------
 function viewLogin(step = 'id', ident = '', devCode = '') {
   document.body.className = 'sp-teacher';
-  const err = h('div', { class: 'err-msg' });
-  const input = h('input', { value: step === 'id' ? ident : '', placeholder: step === 'id' ? 'Mobile number or email' : '6-digit code', inputmode: step === 'id' ? 'text' : 'numeric', autocomplete: step === 'id' ? 'username' : 'one-time-code', maxLength: 80, autofocus: true });
-  const go2 = async () => {
-    err.textContent = '';
-    try {
-      if (step === 'id') { const r = await api('POST', '/auth/request', { identifier: input.value }); viewLogin('code', input.value, r.dev_code || ''); }
-      else { await api('POST', '/auth/verify', { identifier: ident, code: input.value }); await boot(); }
-    } catch (e) { err.textContent = e.message; }
-  };
-  input.addEventListener('keydown', (e) => e.key === 'Enter' && go2());
-  mount(h('div', { class: 'login' }, h('div', { class: 'box' },
-    h('div', { class: 'brand' }, h('div', { class: 'logo' }, 'GU'), h('div', {}, h('b', { style: 'font-size:1.4rem' }, 'GCM UPMARK'), h('small', {}, 'MARKS ENTRY'))),
-    h('div', { class: 'card' }, h('p', { class: 'mute', style: 'margin-top:0' }, step === 'id' ? 'Sign in with your registered mobile number or email. We will send a one-time code.' : 'Enter the code we sent to ' + ident + '.'),
-      input, err, devCode && h('div', { class: 'banner small' }, 'Dev mode code: ', h('b', {}, devCode)),
-      h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { class: 'btn grow', onclick: go2 }, step === 'id' ? 'Send code' : 'Verify & sign in'), step === 'code' && h('button', { class: 'btn ghost', onclick: () => viewLogin() }, 'Back'))))));
+  const err = h('div', { class: 'lg-err', role: 'alert' });
+  const setErr = (m) => { err.textContent = m || ''; };
+  const masked = /@/.test(ident) ? ident.replace(/^(.).*(@.*)$/, '$1•••$2') : '•••••• ' + ident.slice(-4);
+
+  const left = h('div', { class: 'lg-hero' },
+    h('div', { class: 'lg-mark' }, 'GU'),
+    h('h1', {}, 'GCM UPMARK'),
+    h('p', { class: 'lg-tag' }, 'Marks entry for GCM Convent School'),
+    h('ul', { class: 'lg-points' }, ['Fast marks entry for every class and subject', 'Secure sign-in with a one-time WorkCode', 'Marksheets sync to the school ERP'].map((t) => h('li', {}, h('span', { class: 'lg-dot' }), t))));
+
+  let form;
+  if (step === 'id') {
+    const input = h('input', { class: 'lg-input', value: ident, placeholder: 'Mobile number or email', inputmode: 'text', autocomplete: 'username', maxLength: 80, autofocus: true, 'aria-label': 'Mobile number or email' });
+    const btn = h('button', { class: 'lg-btn', type: 'submit' }, 'Get WorkCode');
+    const submit = async (e) => {
+      e && e.preventDefault(); setErr('');
+      if (!input.value.trim()) return setErr('Enter your registered mobile number or email.');
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try { const r = await api('POST', '/auth/request', { identifier: input.value }); viewLogin('code', input.value.trim(), r.dev_code || ''); }
+      catch (x) { setErr(x.message); btn.disabled = false; btn.textContent = 'Get WorkCode'; }
+    };
+    form = h('form', { class: 'lg-form', onsubmit: submit },
+      h('h2', {}, 'Sign in'), h('p', { class: 'lg-sub' }, 'Teachers and administrators sign in here with the mobile number registered with the school.'),
+      h('label', { class: 'lg-label' }, 'Mobile number or email'), input, err, btn,
+      h('p', { class: 'lg-help' }, 'We will send a 6-digit WorkCode on WhatsApp.'));
+  } else {
+    const boxes = [...Array(6)].map((_, i) => h('input', { class: 'lg-box', inputmode: 'numeric', autocomplete: i === 0 ? 'one-time-code' : 'off', maxLength: 1, 'aria-label': 'WorkCode digit ' + (i + 1) }));
+    const btn = h('button', { class: 'lg-btn', type: 'submit' }, 'Verify & sign in');
+    const code = () => boxes.map((x) => x.value).join('');
+    let busy = false;
+    const submit = async (e) => {
+      e && e.preventDefault(); if (busy) return; setErr('');
+      if (code().length < 6) return setErr('Enter all 6 digits of your WorkCode.');
+      busy = true; btn.disabled = true; btn.textContent = 'Verifying…';
+      try { await api('POST', '/auth/verify', { identifier: ident, code: code() }); await boot(); }
+      catch (x) { setErr(x.message); busy = false; btn.disabled = false; btn.textContent = 'Verify & sign in'; boxes.forEach((b) => { b.value = ''; b.classList.add('bad'); }); boxes[0].focus(); setTimeout(() => boxes.forEach((b) => b.classList.remove('bad')), 600); }
+    };
+    boxes.forEach((bx, i) => {
+      bx.addEventListener('input', () => { bx.value = bx.value.replace(/\D/g, '').slice(-1); if (bx.value && i < 5) boxes[i + 1].focus(); if (code().length === 6) submit(); });
+      bx.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && !bx.value && i > 0) { boxes[i - 1].focus(); boxes[i - 1].value = ''; } if (e.key === 'ArrowLeft' && i > 0) boxes[i - 1].focus(); if (e.key === 'ArrowRight' && i < 5) boxes[i + 1].focus(); });
+      bx.addEventListener('paste', (e) => { const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6); if (!t) return; e.preventDefault(); t.split('').forEach((c, k) => { boxes[k].value = c; }); boxes[Math.min(t.length, 5)].focus(); if (t.length === 6) submit(); });
+      bx.addEventListener('focus', () => bx.select());
+    });
+    const resend = h('button', { class: 'lg-link', type: 'button', disabled: true }, '');
+    let left30 = 30;
+    const tick = () => {
+      if (!resend.isConnected) return;
+      if (left30 > 0) { resend.disabled = true; resend.textContent = 'Resend WorkCode in ' + left30 + 's'; left30--; setTimeout(tick, 1000); }
+      else { resend.disabled = false; resend.textContent = 'Resend WorkCode'; }
+    };
+    resend.onclick = async () => {
+      setErr(''); resend.disabled = true;
+      try { const r = await api('POST', '/auth/request', { identifier: ident }); toast('A new WorkCode has been sent'); left30 = 30; tick(); if (r.dev_code) viewLogin('code', ident, r.dev_code); }
+      catch (x) { setErr(x.message); resend.disabled = false; }
+    };
+    form = h('form', { class: 'lg-form', onsubmit: submit },
+      h('h2', {}, 'Enter your WorkCode'), h('p', { class: 'lg-sub' }, 'We sent a 6-digit WorkCode to ', h('b', {}, masked), '. It is valid for 5 minutes.'),
+      h('div', { class: 'lg-boxes' }, boxes), err,
+      devCode && h('div', { class: 'lg-dev' }, 'Dev mode WorkCode: ', h('b', {}, devCode)),
+      btn,
+      h('div', { class: 'lg-row' }, h('button', { class: 'lg-link', type: 'button', onclick: () => viewLogin('id', ident) }, '← Change number'), resend));
+    setTimeout(() => { tick(); boxes[0].focus(); }, 0);
+  }
+  mount(h('div', { class: 'lgn' }, left, h('div', { class: 'lg-panel' }, form, h('div', { class: 'lg-foot' }, 'GCM Convent School · Marks Entry Portal'))));
 }
 
 // ---------- teacher: dashboard ----------
+const examState = (e) => e.status === 'draft' ? 'Draft' : (e.approved_at ? 'Approved by admin' + (e.parents_sent_at ? ' · parents notified' : ' · ready to send to parents') : 'Submitted · awaiting admin approval') + (e.locked_at ? ' · ' + fmtTs(e.locked_at) : '');
 const examItem = (e, actions, extra) => h('div', { class: 'li' }, h('div', { class: 'grow' }, h('b', {}, e.label),
-  h('div', { class: 'small mute' }, (e.status === 'draft' ? 'Draft' : 'Locked' + (e.locked_at ? ' · ' + fmtTs(e.locked_at) : '')) + (e.owner_name ? ' · ' + e.owner_name : '')), extra), h('div', { class: 'row' }, actions));
+  h('div', { class: 'small mute' }, examState(e) + (e.owner_name ? ' · ' + e.owner_name : '')), extra), h('div', { class: 'row' }, actions));
 
 async function pgDashboard() {
   const d = S.data, st = d.stats, atLimit = d.drafts.length >= d.draft_limit;
@@ -190,6 +241,32 @@ async function pgDashboard() {
 async function discardDraft(e) {
   if (!confirm('Discard this draft?\n' + e.label + '\nAll marks entered in it will be deleted.')) return;
   try { await api('DELETE', '/exams/' + e.id); localStorage.removeItem('rea:stash:' + e.id); toast('Draft discarded'); render(); } catch (x) { toast(x.message, true); }
+}
+
+// ---------- teacher: my classes (Frappe student details) ----------
+async function pgClasses() {
+  const scope = await api('GET', '/scope');
+  const groups = scope.groups;
+  const sel = S.clsSel && groups.find((g) => g.class_name === S.clsSel.class_name && g.section === S.clsSel.section) ? S.clsSel : (groups[0] || null);
+  const out = h('div');
+  const chips = h('div', { class: 'chips', style: 'margin-bottom:14px' }, groups.map((g) => h('button', { class: 'chip' + (sel && g.class_name === sel.class_name && g.section === sel.section ? ' on' : ''), onclick: () => { S.clsSel = g; render(); } }, g.label)));
+  shellMount({ title: 'My Classes', sub: 'Student details from the school ERP (Frappe)', content: [
+    groups.length === 0 ? h('div', { class: 'card' }, h('div', { class: 'empty' }, 'No classes are assigned to you yet. Ask the administrator to assign your classes and subjects.')) : [chips, out]] });
+  if (!sel) return;
+  const d = await api('GET', '/roster?class_name=' + encodeURIComponent(sel.class_name) + '&section=' + encodeURIComponent(sel.section));
+  const q = h('input', { placeholder: 'Search name, roll or admission no.' });
+  const tbl = h('div');
+  const draw = () => {
+    const t = q.value.trim().toLowerCase();
+    const list = d.students.filter((x) => !t || (x.name + ' ' + x.roll_no + ' ' + x.admission_no).toLowerCase().includes(t));
+    const par = (n, m) => (n || m) ? h('div', {}, n || '', m && h('div', { class: 'small mute' }, m)) : h('span', { class: 'mute' }, '-');
+    fill(tbl, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Roll', 'Admission no.', 'Name', 'Gender', 'Date of birth', 'Father', 'Mother'].map((x) => h('th', {}, x)))),
+      h('tbody', {}, list.map((x) => h('tr', {}, h('td', {}, x.roll_no), h('td', {}, x.admission_no), h('td', {}, h('b', {}, x.name)), h('td', {}, x.gender), h('td', {}, x.dob ? fmtDate(x.dob) : ''), h('td', {}, par(x.father_name, x.father_mobile)), h('td', {}, par(x.mother_name, x.mother_mobile))))))));
+  };
+  q.oninput = draw;
+  fill(out, h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, sel.label), h('div', { class: 'small mute' }, d.students.length + ' students · Subjects you teach: ' + (d.subjects.join(', ') || '-') + ' · ' + (d.frappe_configured ? 'Synced from Frappe' + (d.last_sync ? ' ' + fmtTs(d.last_sync) : '') : 'Frappe not configured'))),
+    h('button', { class: 'btn', onclick: () => go('new') }, 'Start a test')), h('div', { style: 'margin:12px 0' }, q), tbl));
+  draw();
 }
 
 // ---------- teacher: tests list ----------
@@ -388,8 +465,36 @@ function viewWorkspace() {
     tools.append(h('button', { class: 'pill sm' + (W.studentWise ? ' on' : ''), onclick: () => { W.studentWise = !W.studentWise; rebuildList(); viewWorkspace(); } }, W.studentWise ? 'Student-wise' : 'Subject-wise'));
     if (!W.studentWise) W.vis.forEach((s) => tools.append(h('button', { class: 'pill sm' + (W.subj === s ? ' on' : ''), onclick: () => { W.subj = s; W.af = 0; rebuildList(); viewWorkspace(); } }, s)));
   }
-  shellMount({ bare: true, content: [ctx, tools, h('div', { id: 'body' }), h('div', { id: 'pad' })] });
+  shellMount({ bare: true, content: [ctx, W.locked && approvalBar(), tools, h('div', { id: 'body' }), h('div', { id: 'pad' })] });
   renderBody(); updateProgress();
+}
+function approvalBar() {
+  const ex = W.exam, bar = h('div', { class: 'banner', style: 'margin:8px 0' });
+  const admin = isAdmin();
+  const draw = (st) => {
+    if (!ex.approved_at) {
+      fill(bar, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, 'Submitted. '), admin ? 'Review the marks, then approve this test.' : 'Waiting for the administrator to approve this marksheet. You will be able to send results to parents once it is approved.'),
+        admin && h('button', { class: 'btn sm', onclick: async () => { try { await api('POST', '/admin/exams/' + W.id + '/approve', {}); toast('Test approved'); openExam(W.id, { noPush: true }); } catch (e) { toast(e.message, true); } } }, 'Approve')));
+      return;
+    }
+    const info = st ? (st.running ? 'Sending… ' : '') + st.sent + ' sent' + (st.failed ? ', ' + st.failed + ' failed' : '') + (st.pending && !st.running ? ', ' + st.pending + ' not sent' : '') : (ex.parents_sent_at ? 'Parents were notified on ' + fmtTs(ex.parents_sent_at) : '');
+    fill(bar, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, '✅ Approved by admin. '), 'You can now send each child\'s result to their parents on WhatsApp.', info && h('div', { class: 'small mute', style: 'margin-top:4px' }, info)),
+      h('button', { class: 'btn sm', id: 'sendp', disabled: !!(st && st.running), onclick: sendToParents }, ex.parents_sent_at || (st && st.sent) ? 'Send again (retry unsent)' : 'Send to parents')));
+  };
+  async function poll() {
+    try { const st = await api('GET', '/exams/' + W.id + '/parents-status'); draw(st); if (st.running) setTimeout(() => bar.isConnected && poll(), 1500); } catch (_) {}
+  }
+  async function sendToParents() {
+    const st0 = await api('GET', '/exams/' + W.id + '/parents-status').catch(() => null);
+    if (!confirm('Send these results to the parents of every student in ' + groupLabelJS(ex) + '?\nEach parent receives only their own child\'s result on WhatsApp.' + (st0 && st0.sent ? '\nAlready delivered messages are not sent again.' : ''))) return;
+    try {
+      const r = await api('POST', '/exams/' + W.id + '/notify-parents', {});
+      toast(r.queued + ' message(s) queued' + (r.no_number ? ' · ' + r.no_number + ' student(s) have no parent mobile in Frappe' : '') + (r.already_sent ? ' · ' + r.already_sent + ' already sent' : ''), false);
+      poll();
+    } catch (e) { toast(e.message, true); }
+  }
+  draw(null); if (ex.approved_at) poll();
+  return bar;
 }
 function leaveWorkspace() {
   if (W && W.dirty.size && !confirm('You have unsaved marks (kept safely on this device). Leave anyway?')) return;
@@ -428,7 +533,7 @@ function renderCard() {
   const card = h('div', { class: 'sc' + dim },
     h('div', { class: 'small mute' }, (W.idx + 1) + ' of ' + ids.length), h('div', { class: 'roll' }, 'Roll ' + s.roll_no), h('div', { class: 'nm' }, s.name), h('div', { class: 'adm' }, 'Adm. ' + s.admission_no), rows,
     !W.locked && h('div', { class: 'qs' }, ['AB', 'EX'].map((st) => h('button', { class: 'pill' + (stat === st ? ' on' : ''), onclick: () => setStatus(s.id, st, true) }, '[ ' + st + ' ]'))),
-    W.locked && (pendingKey ? h('div', { class: 'banner' }, 'Correction request pending approval') : h('button', { class: 'btn', style: 'margin-top:12px', onclick: () => correctionModal(s) }, 'Request Correction Unlock')));
+    W.locked && (S.me.role !== 'admin' ? h('div', { class: 'banner' }, 'Locked. Only an administrator can edit this marksheet.') : h('button', { class: 'btn', style: 'margin-top:12px', onclick: () => correctionModal(s) }, 'Edit score (administrator)')));
   fill(body, h('div', { class: 'deck' }, card));
   if (W.locked) return fill(pad, h('div', { class: 'foot' }, h('button', { class: 'btn ghost', onclick: () => stepCard(-1) }, '← Prev'), h('button', { class: 'btn', onclick: () => stepCard(1) }, 'Next →')));
   const key = (lab, fn) => h('button', { class: 'k', onclick: fn }, lab);
@@ -491,7 +596,7 @@ function tableRow(s) {
   });
   cells.push(h('td', {}, W.locked ? null : ['AB', 'EX'].map((st) => h('button', { class: 'st' + (subs.every((x) => entry(s.id, x).status === st) ? ' on' : ''), onclick: () => { setStatus(s.id, st, false); tr.replaceWith(tableRow(s)); } }, st))));
   tr.append(...cells);
-  if (W.locked) tr.addEventListener('click', () => (subs.some((x) => W.pending.has(keyOf(s.id, x))) ? toast('A correction is already pending for this student') : correctionModal(s)));
+  if (W.locked) tr.addEventListener('click', () => (S.me.role !== 'admin' ? toast('Locked. Only an administrator can edit this marksheet.') : correctionModal(s)));
   return tr;
 }
 function tableNav(ev, inp) {
@@ -527,7 +632,7 @@ async function finalize() {
   if (!(await saveDraft(true))) return;
   const left = W.roster.filter((s) => !W.vis.every((sub) => entryState(s.id, sub) === 'done'));
   if (left.length && !W.exam.combined) return flagMissing(left.map((s) => s.id));
-  if (!confirm('Finalize & Lock this marking sheet?\nIt cannot be edited afterwards; only single-student correction requests are possible.')) return;
+  if (!confirm('Finalize & Lock this marking sheet?\nAfter locking, only an administrator can edit it.')) return;
   try {
     const r = await api('POST', '/exams/' + W.id + '/finalize', {});
     toast('Locked ✔  ' + r.stats.graded + ' graded, ' + r.stats.absent + ' absent, ' + r.stats.exempt + ' exempt');
@@ -551,12 +656,13 @@ function overlay(content) {
 }
 const kindText = {
   created: 'Test created', draft_saved: 'Initial draft saved', draft_updated: 'Draft updated', locked: 'Finalized & locked', discarded: 'Draft discarded',
-  erp_synced: 'Synced to Frappe Education', correction_requested: 'Correction requested', correction_approved: 'Correction approved', correction_rejected: 'Correction rejected', correction_synced: 'Correction re-synced to ERP' };
+  approved: 'Approved by administrator', erp_synced: 'Synced to Frappe Education', correction_requested: 'Correction requested', correction_approved: 'Correction approved', correction_rejected: 'Correction rejected', correction_synced: 'Correction re-synced to ERP' };
 function eventDetail(ev) {
   const d = ev.detail || {};
   switch (ev.kind) {
     case 'created': return (d.subjects || []).join(', ') + ' · max ' + d.max_total + (d.split ? ' (split: ' + d.components.map((c) => c.name + ' ' + c.max).join(' + ') + ')' : '');
     case 'draft_saved': case 'draft_updated': return d.entries_total + ' entries stored';
+    case 'approved': return 'Approved and queued for Frappe';
     case 'locked': return d.graded + ' graded · ' + d.absent + ' AB · ' + d.exempt + ' EX' + (d.average != null ? ' · avg ' + d.average + ' / ' + d.max_total : '');
     case 'correction_requested': return 'Roll ' + d.roll_no + ' ' + d.student + ' (' + d.subject + '): ' + d.old + ' → ' + d.new + ' — “' + d.reason + '”';
     case 'correction_approved': case 'correction_rejected': return 'Roll ' + d.roll_no + ' ' + d.student + ': ' + d.old + ' → ' + d.new + (d.note ? ' — ' + d.note : '');
@@ -574,8 +680,7 @@ async function showTimeline(examId) {
   } catch (e) { toast(e.message, true); }
 }
 function correctionModal(s) {
-  const subs = W.vis.filter((x) => !W.pending.has(keyOf(s.id, x)));
-  if (!subs.length) return toast('A correction is already pending for this student');
+  const subs = W.vis;
   let subj = subs[0], status = '';
   const body = h('div'), err = h('div', { class: 'err-msg' });
   let vals = [];
@@ -590,17 +695,17 @@ function correctionModal(s) {
       subs.length > 1 && h('div', { class: 'pills' }, subs.map((x) => h('button', { class: 'pill sm' + (x === subj ? ' on' : ''), onclick: () => { subj = x; draw(); } }, x))),
       h('div', { class: 'banner' }, 'Current locked score: ', h('b', {}, cur.status || cur.comps.join(' + ') + (cur.comps.length > 1 ? ' = ' + cur.comps.reduce((a, b) => a + parseFloat(b || 0), 0) : ''))),
       h('div', { class: 'pills' }, [['', 'Score'], ['AB', 'AB'], ['EX', 'EX']].map(([v, l]) => h('button', { class: 'pill sm' + (status === v ? ' on' : ''), onclick: () => { status = v; draw(); } }, l))),
-      h('label', { class: 'f' }, 'Proposed new score'), inputs, err, h('label', { class: 'f' }, 'Reason / evidence note'), reason);
+      h('label', { class: 'f' }, 'New score'), inputs, err, h('label', { class: 'f' }, 'Reason / evidence note'), reason);
   };
   draw();
-  const ov = overlay([h('h2', { style: 'margin-top:0' }, 'Request Correction Unlock'), body,
+  const ov = overlay([h('h2', { style: 'margin-top:0' }, 'Edit locked score'), body,
     h('div', { class: 'row', style: 'margin-top:14px' }, h('button', { class: 'btn grow', onclick: async () => {
       const comps = vals.map((v) => (v === '' ? null : parseFloat(v)));
       for (let i = 0; i < comps.length && !status; i++) { const k = checkField(vals[i], W.exam.components[i].max); if (!k.ok) return (err.textContent = k.msg); if (k.empty) return (err.textContent = 'Enter the proposed score'); }
       try { await api('POST', '/exams/' + W.id + '/corrections', { student_id: s.id, subject: subj, status, comps: status ? [] : comps, reason: reason.value });
-        W.pending.add(keyOf(s.id, subj)); ov.remove(); toast('Correction request sent to the administrator'); renderBody(); }
+        ov.remove(); toast('Score updated'); openExam(W.id, { noPush: true }); }
       catch (e) { err.textContent = e.message; }
-    } }, 'Submit request'), h('button', { class: 'btn ghost', onclick: () => ov.remove() }, 'Cancel'))]);
+    } }, 'Save change'), h('button', { class: 'btn ghost', onclick: () => ov.remove() }, 'Cancel'))]);
 }
 
 // ---------- admin space ----------
@@ -692,7 +797,7 @@ async function pgAdminAllocations() {
       fill(matrix, h('div', { class: 'small mute', style: 'margin-bottom:8px' }, label(A.class_name, A.section) + ' · ' + m.students + ' students'), h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Subject', 'Assigned teachers', 'Add teacher'].map((x) => h('th', {}, x)))),
         h('tbody', {}, m.subjects.map((s) => {
           const free = m.teachers.filter((t) => !s.teachers.some((x) => x.id === t.id));
-          const sel = h('select', { 'aria-label': 'Add teacher for ' + s.subject, style: 'min-width:170px' }, h('option', { value: '' }, 'Select teacher…'), free.map((t) => h('option', { value: t.id }, t.name)));
+          const sel = h('select', { 'aria-label': 'Add teacher for ' + s.subject, style: 'min-width:220px' }, h('option', { value: '' }, free.length ? 'Select teacher…' : (m.teachers.length ? 'All teachers already assigned' : 'No teachers yet: add them in Teachers')), free.map((t) => h('option', { value: t.id }, t.name)));
           return h('tr', {}, h('td', {}, h('b', {}, s.subject)),
             h('td', {}, s.teachers.length === 0 ? h('span', { class: 'mute' }, 'Unassigned') : h('div', { class: 'chips' }, s.teachers.map((t) => h('span', { class: 'chip on' }, t.name, h('button', { class: 'x', 'aria-label': 'Remove ' + t.name, onclick: () => assign(s.subject, t.id, false) }, '✕'))))),
             h('td', {}, h('div', { class: 'row', style: 'flex-wrap:nowrap' }, sel, h('button', { class: 'btn sm', onclick: () => sel.value ? assign(s.subject, +sel.value, true) : toast('Select a teacher first', true) }, 'Assign'))));
@@ -710,12 +815,146 @@ async function pgAdminTeachers() {
   shellMount({ title: 'Teachers', sub: 'Add teachers and manage what they can see', content: [
     h('div', { class: 'card' }, h('h3', {}, 'Add teacher'), h('div', { class: 'grid2' }, name, mob, em, role), err,
       h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => { try { await api('POST', '/admin/users', { name: name.value, mobile: mob.value, email: em.value, role: role.value }); toast('User added'); render(); } catch (e) { err.textContent = e.message; } } }, 'Add')),
+    importCard(),
+    dummyCard(),
     d.users.map((u) => {
       const holder = h('div');
       return h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, u.name), ' ', h('span', { class: 'badge' }, u.role), !u.active && h('span', { class: 'badge red' }, 'inactive'), h('div', { class: 'small mute' }, [u.mobile, u.email].filter(Boolean).join(' · ') + ' · ' + u.allocations + ' allocations')),
         h('div', { class: 'row' }, u.role === 'teacher' && h('button', { class: 'btn sm ghost', onclick: () => allocEditor(holder, u, scope) }, 'Classes & subjects'),
           h('button', { class: 'btn sm ghost', onclick: async () => { try { await api('PUT', '/admin/users/' + u.id, { ...u, active: !u.active }); render(); } catch (e) { toast(e.message, true); } } }, u.active ? 'Deactivate' : 'Activate'))), holder);
     })] });
+}
+function importCard() {
+  const file = h('input', { type: 'file', accept: '.csv,.pdf,text/csv,application/pdf' });
+  const out = h('div', { style: 'margin-top:10px' });
+  const send = async (dry) => {
+    if (!file.files[0]) { toast('Choose a CSV or PDF file first', true); return; }
+    const fd = new FormData(); fd.append('file', file.files[0]);
+    const res = await fetch('/api/admin/users/import' + (dry ? '?dry=1' : ''), { method: 'POST', headers: { 'X-Requested-With': 'rea' }, credentials: 'same-origin', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Import failed');
+    return data;
+  };
+  const preview = async () => {
+    try {
+      const d = await send(true);
+      const n = d.rows.filter((r) => r.status === 'new').length;
+      fill(out, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Name', 'Mobile', 'Email', 'Result'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, d.rows.map((r) => h('tr', {}, h('td', {}, r.name), h('td', {}, r.mobile), h('td', {}, r.email), h('td', {}, r.status === 'new' ? 'Will be added' : r.status === 'exists' ? 'Skipped: ' + r.note : 'Invalid: ' + r.note)))))),
+        h('button', { class: 'btn', style: 'margin-top:10px', disabled: n === 0, onclick: async () => { try { const x = await send(false); toast(x.added + ' teachers imported'); render(); } catch (e) { toast(e.message, true); } } }, 'Import ' + n + ' new teachers'));
+    } catch (e) { toast(e.message, true); }
+  };
+  return h('div', { class: 'card' }, h('h3', {}, 'Import teachers (CSV or PDF)'),
+    h('p', { class: 'mute small', style: 'margin-top:0' }, 'One teacher per row with a name and a 10-digit mobile number (email optional). You will see a preview before anything is saved. PDFs must contain real text, not a scanned image.'),
+    h('div', { class: 'row' }, file, h('button', { class: 'btn ghost', onclick: preview }, 'Preview')), out);
+}
+function studentImportCard() {
+  const file = h('input', { type: 'file', accept: '.csv,.pdf,text/csv,application/pdf' });
+  const out = h('div', { style: 'margin-top:10px' });
+  const send = async (dry) => {
+    if (!file.files[0]) { toast('Choose a CSV or PDF file first', true); return; }
+    const fd = new FormData(); fd.append('file', file.files[0]);
+    const res = await fetch('/api/admin/students/import' + (dry ? '?dry=1' : ''), { method: 'POST', headers: { 'X-Requested-With': 'rea' }, credentials: 'same-origin', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Import failed');
+    return data;
+  };
+  const preview = async () => {
+    try {
+      const d = await send(true); if (!d) return;
+      const n = d.rows.filter((r) => r.status === 'new').length;
+      fill(out, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Roll', 'Admission no.', 'Name', 'Class', 'Section', 'Result'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, d.rows.map((r) => h('tr', {}, h('td', {}, r.roll_no), h('td', {}, r.admission_no), h('td', {}, r.name), h('td', {}, r.class_name), h('td', {}, r.section), h('td', {}, r.status === 'new' ? 'Will be added' : r.status === 'exists' ? 'Skipped: ' + r.note : 'Invalid: ' + r.note)))))),
+        h('button', { class: 'btn', style: 'margin-top:10px', disabled: n === 0, onclick: async () => { try { const x = await send(false); toast(x.added + ' students imported'); render(); } catch (e) { toast(e.message, true); } } }, 'Import ' + n + ' new students'));
+    } catch (e) { toast(e.message, true); }
+  };
+  return h('div', { class: 'card' }, h('h3', {}, 'Import students (CSV or PDF)'),
+    h('p', { class: 'mute small', style: 'margin-top:0' }, 'One student per row: roll no., admission no., name, class and section (the class and section must already exist, e.g. 5TH A). Review the preview first. Students added this way live in this app only: marks for them are saved here but cannot be pushed to Frappe until the student exists there (use the Frappe Student ID as the admission no. and the next fetch will match them).'),
+    h('div', { class: 'row' }, file, h('button', { class: 'btn ghost', onclick: preview }, 'Preview')), out);
+}
+const TAGS = { below: ['Below Average', '#ff7070'], average: ['Average', '#f5b84a'], excellent: ['Excellent', '#8be04e'] };
+function tagLegend() { return h('div', { class: 'row', style: 'gap:14px;flex-wrap:wrap' }, Object.values(TAGS).map(([l, c]) => h('span', { class: 'small' }, h('span', { style: 'display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:' + c }), l))); }
+function stackBar(t) {
+  const n = t.below + t.average + t.excellent;
+  if (!n) return h('span', { class: 'mute small' }, t.absent ? t.absent + ' absent / exempt' : 'no marks');
+  const seg = (k) => h('div', { title: TAGS[k][0] + ': ' + t[k], style: 'height:100%;background:' + TAGS[k][1] + ';width:' + (t[k] / n * 100) + '%' });
+  return h('div', { style: 'display:flex;height:16px;border-radius:8px;overflow:hidden;background:var(--card2);min-width:140px;flex:1' }, seg('below'), seg('average'), seg('excellent'));
+}
+function barRows(list, nameKey) {
+  return list.length === 0 ? h('div', { class: 'empty' }, 'No submitted tests in this period.') : list.map((t) => h('div', { class: 'row', style: 'flex-wrap:nowrap;margin:8px 0;gap:12px' },
+    h('div', { style: 'width:130px;flex:none;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, t[nameKey]), stackBar(t),
+    h('div', { class: 'small mute', style: 'width:150px;flex:none;text-align:right' }, 'avg ' + t.avg + '% · ' + t.below + ' / ' + t.average + ' / ' + t.excellent)));
+}
+function donut(o) {
+  const n = o.below + o.average + o.excellent;
+  const a = n ? o.below / n * 100 : 0, b = n ? a + o.average / n * 100 : 0;
+  const bg = n ? 'conic-gradient(' + TAGS.below[1] + ' 0 ' + a + '%,' + TAGS.average[1] + ' ' + a + '% ' + b + '%,' + TAGS.excellent[1] + ' ' + b + '% 100%)' : 'var(--card2)';
+  return h('div', { style: 'width:170px;height:170px;border-radius:50%;flex:none;display:grid;place-items:center;background:' + bg }, h('div', { style: 'width:110px;height:110px;border-radius:50%;background:var(--card);display:grid;place-items:center;text-align:center' }, h('div', {}, h('div', { style: 'font-size:1.6rem;font-weight:800' }, o.avg + '%'), h('div', { class: 'small mute' }, 'class avg'))));
+}
+async function pgAdminApprovals() {
+  const d = await api('GET', '/admin/approvals');
+  const pend = d.exams.filter((r) => !r.approved);
+  const approve = async (r) => { try { await api('POST', '/admin/exams/' + r.exam.id + '/approve', {}); toast('Approved: ' + r.exam.label); render(); } catch (e) { toast(e.message, true); } };
+  const row = (r) => h('div', { class: 'li' }, h('div', { class: 'grow' }, h('b', {}, r.exam.label), h('div', { class: 'small mute' }, r.exam.owner_name + ' · submitted ' + fmtTs(r.exam.locked_at) + ' · ' + (r.graded - r.absent) + ' graded, ' + r.absent + ' AB/EX' + (r.avg_pct ? ' · avg ' + r.avg_pct + '%' : ''))),
+    h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: () => openExam(r.exam.id) }, 'Review'), r.approved ? h('span', { class: 'badge' }, '✓ Approved') : h('button', { class: 'btn sm', onclick: () => approve(r) }, 'Approve')));
+  shellMount({ title: 'Approvals', sub: 'Review submitted marksheets before they reach Frappe and parents', cta: pend.length > 1 ? h('button', { class: 'cta', onclick: async () => { if (!confirm('Approve all ' + pend.length + ' submitted tests?')) return; for (const r of pend) { try { await api('POST', '/admin/exams/' + r.exam.id + '/approve', {}); } catch (_) {} } toast('Approved'); render(); } }, 'Approve all (' + pend.length + ')') : null,
+    content: [h('div', { class: 'card' }, h('h3', {}, 'Awaiting approval (' + pend.length + ')'), pend.length ? pend.map(row) : h('div', { class: 'empty' }, 'Nothing waiting. New submissions from teachers appear here.')),
+      h('div', { class: 'card' }, h('h3', {}, 'Recently approved'), d.exams.filter((r) => r.approved).slice(0, 15).map(row), !d.exams.some((r) => r.approved) && h('div', { class: 'empty' }, 'No approved tests yet.'))] });
+}
+async function pgAdminAnalysis() {
+  const days = h('select', {}, [[7, 'Last 7 days'], [14, 'Last 14 days'], [30, 'Last 30 days']].map(([v, l]) => h('option', { value: v }, l)));
+  days.value = S.anDays || 7;
+  days.onchange = () => { S.anDays = days.value; render(); };
+  const d = await api('GET', '/admin/analysis?days=' + days.value);
+  const o = d.overall, n = o.below + o.average + o.excellent;
+  const maxT = Math.max(1, ...d.daily.map((x) => x.tests));
+  shellMount({ title: 'Weekly Analysis', sub: 'Performance of tests submitted by teachers', cta: days, content: [
+    h('div', { class: 'stats' }, statCard('lock', d.tests, 'Tests submitted', 'in the last ' + d.days + ' days'), statCard('users', n, 'Marks analysed', o.absent + ' absent / exempt'), statCard('chart', o.avg + '%', 'Average score'), statCard('clock', o.below, 'Below average', 'students need attention')),
+    h('div', { class: 'card' }, h('h3', {}, 'Overall performance'), n === 0 ? h('div', { class: 'empty' }, 'No submitted (locked) tests in this period yet. Teachers lock a test to include it here.') :
+      h('div', { class: 'row', style: 'gap:28px;align-items:center;flex-wrap:wrap' }, donut(o), h('div', {}, Object.keys(TAGS).map((k) => h('div', { style: 'margin:6px 0' }, h('span', { style: 'display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;background:' + TAGS[k][1] }), h('b', {}, TAGS[k][0]), ' · ' + o[k] + ' (' + Math.round(o[k] / n * 100) + '%)')),
+        h('div', { class: 'small mute', style: 'margin-top:8px' }, 'Tags by score: Below Average under ' + d.rules.below_under + '%, Average ' + d.rules.below_under + '–' + (d.rules.excellent_from - 0.01) + '%, Excellent ' + d.rules.excellent_from + '% and above.')))),
+    h('div', { class: 'card' }, h('h3', {}, 'Tests submitted per day'), h('div', { style: 'display:flex;align-items:flex-end;gap:8px;height:120px;margin-top:10px' },
+      d.daily.map((x) => h('div', { style: 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0' },
+        h('div', { class: 'small' }, x.tests || ''), h('div', { title: x.tests + ' tests', style: 'width:100%;max-width:46px;border-radius:6px 6px 0 0;background:var(--brand);height:' + (x.tests ? Math.max(6, x.tests / maxT * 80) : 2) + 'px;opacity:' + (x.tests ? 1 : .3) }),
+        h('div', { class: 'small mute', style: 'margin-top:4px' }, x.date.slice(8) + '/' + x.date.slice(5, 7)))))),
+    h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h3', { style: 'margin:0' }, 'By class'), tagLegend()), barRows(d.by_class, 'label'), h('div', { class: 'small mute' }, 'Right column: average · below / average / excellent counts')),
+    h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h3', { style: 'margin:0' }, 'By subject'), tagLegend()), barRows(d.by_subject, 'label')),
+    h('div', { class: 'card' }, h('h3', {}, 'By teacher'), d.teachers.length === 0 ? h('div', { class: 'empty' }, 'No submitted tests in this period.') :
+      h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Teacher', 'Tests submitted', 'Average', 'Below', 'Average', 'Excellent'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, d.teachers.map((t) => h('tr', {}, h('td', {}, t.name), h('td', {}, t.tests), h('td', {}, t.avg + '%'), h('td', {}, t.below), h('td', {}, t.average), h('td', {}, t.excellent))))))),
+    h('div', { class: 'card' }, h('h3', {}, 'Students needing attention (' + d.weak_total + ')'), d.weak.length === 0 ? h('div', { class: 'empty' }, 'No students below ' + d.rules.below_under + '%.') :
+      h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Student', 'Roll', 'Class', 'Subject', 'Score'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, d.weak.map((w) => h('tr', {}, h('td', {}, w.name), h('td', {}, w.roll), h('td', {}, w.class), h('td', {}, w.subject), h('td', { style: 'color:' + TAGS.below[1] + ';font-weight:700' }, w.pct + '%'))))))),
+  ] });
+}
+function dummyCard() {
+  const nm = h('input', { placeholder: 'Name, e.g. Test Teacher' }), mob = h('input', { placeholder: 'Real mobile (10 digits)', inputmode: 'numeric' });
+  const all = h('input', { type: 'checkbox', checked: true });
+  return h('div', { class: 'card' }, h('h3', {}, 'Add test teacher'),
+    h('p', { class: 'mute small', style: 'margin-top:0' }, 'Creates a teacher on a real WhatsApp number (yours or a colleague\'s) so you can sign in with the WorkCode and test marks entry. Deactivate when testing is done.'),
+    h('div', { class: 'grid2' }, nm, mob), h('label', { class: 'row small', style: 'margin:8px 0' }, all, ' Give access to all classes and subjects'),
+    h('button', { class: 'btn', onclick: async () => { try { const r = await api('POST', '/admin/users/dummy', { name: nm.value, mobile: mob.value, all_access: all.checked }); toast(r.name + ' added (' + r.mobile + ')'); render(); } catch (e) { toast(e.message, true); } } }, 'Add test teacher'));
+}
+async function pgAdminStudents() {
+  const cls = await api('GET', '/admin/classes');
+  const sel = h('select', {}, h('option', { value: '' }, 'All classes'), cls.classes.map((c) => h('option', { value: c.class_name + '\x00' + c.section }, c.label + ' (' + c.students + ')')));
+  const q = h('input', { placeholder: 'Search name or admission no.' });
+  const list = h('div');
+  const load = async () => {
+    const [c, sc] = sel.value.split('\x00');
+    const d = await api('GET', '/admin/students?q=' + encodeURIComponent(q.value) + (sel.value ? '&class_name=' + encodeURIComponent(c) + '&section=' + encodeURIComponent(sc) : ''));
+    fill(list, h('div', { class: 'small mute' }, d.total + ' students' + (d.total > d.students.length ? ' (showing first ' + d.students.length + ')' : '')),
+      h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Class', 'Section', 'Roll', 'Admission no.', 'Name'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, d.students.map((s) => h('tr', {}, h('td', {}, s.class_name), h('td', {}, s.section), h('td', {}, s.roll_no), h('td', {}, s.admission_no), h('td', {}, s.name)))))));
+  };
+  sel.onchange = load; q.oninput = load;
+  const o = S.counts;
+  shellMount({ title: 'Students', sub: 'Roster fetched from Frappe', content: [
+    h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, 'Frappe ERP'), h('div', { class: 'small mute' }, o.frappe_configured ? 'Connected. Last fetch: ' + (o.last_master_sync ? fmtTs(o.last_master_sync) : 'never') : 'Not configured (FRAPPE_URL / FRAPPE_API_KEY / FRAPPE_API_SECRET)')),
+      h('button', { class: 'btn', disabled: !o.frappe_configured, onclick: (e) => runMasterSync(e.target) }, 'Fetch students from Frappe'))),
+    studentImportCard(),
+    h('div', { class: 'card' }, h('div', { class: 'row' }, sel, q), list)] });
+  load();
 }
 async function allocEditor(holder, u, scope) {
   if (holder.childNodes.length) return fill(holder);

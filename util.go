@@ -66,6 +66,10 @@ func splitGroup(name string) (string, string) {
 	if m := sectionRe.FindStringSubmatch(name); m != nil {
 		return strings.TrimSpace(m[1]), strings.ToUpper(m[2])
 	}
+	// Named sections, e.g. "2ND BLOSSOM" -> class "2ND", section "BLOSSOM".
+	if i := strings.Index(name, " "); i > 0 {
+		return name[:i], strings.ToUpper(strings.TrimSpace(name[i+1:]))
+	}
 	return name, ""
 }
 

@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS jobs(
   last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state, next_try);
 CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS parent_msgs(
+  exam_id INTEGER NOT NULL, student_id INTEGER NOT NULL, mobile TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  error TEXT NOT NULL DEFAULT '', sent_at TEXT NOT NULL DEFAULT '', PRIMARY KEY(exam_id, student_id, mobile));
 `
 
 func openDB(path string) (*sql.DB, error) {
@@ -90,6 +93,9 @@ func openDB(path string) (*sql.DB, error) {
 	db.SetMaxOpenConns(8)
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
+	}
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return db, nil
 }
@@ -121,3 +127,33 @@ func (t *wtx) release() {
 
 func (t *wtx) Commit() error   { defer t.release(); return t.Tx.Commit() }
 func (t *wtx) Rollback() error { defer t.release(); return t.Tx.Rollback() }
+
+// migrate adds columns introduced after the first release (CREATE TABLE IF NOT EXISTS never alters an existing table).
+func migrate(db *sql.DB) error {
+	add := map[string][][2]string{
+		"exams": {{"approved_at", "TEXT NOT NULL DEFAULT ''"}, {"approved_by", "INTEGER NOT NULL DEFAULT 0"}, {"parents_sent_at", "TEXT NOT NULL DEFAULT ''"}},
+		"students": {{"gender", "TEXT NOT NULL DEFAULT ''"}, {"dob", "TEXT NOT NULL DEFAULT ''"}, {"father_name", "TEXT NOT NULL DEFAULT ''"},
+			{"father_mobile", "TEXT NOT NULL DEFAULT ''"}, {"mother_name", "TEXT NOT NULL DEFAULT ''"}, {"mother_mobile", "TEXT NOT NULL DEFAULT ''"}},
+	}
+	for table, cols := range add {
+		have := map[string]bool{}
+		rows, err := db.Query(`SELECT name FROM pragma_table_info('` + table + `')`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var n string
+			rows.Scan(&n)
+			have[n] = true
+		}
+		rows.Close()
+		for _, c := range cols {
+			if !have[c[0]] {
+				if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + c[0] + ` ` + c[1]); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}

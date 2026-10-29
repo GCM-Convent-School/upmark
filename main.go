@@ -39,11 +39,21 @@ type Config struct {
 	SMTPPass      string
 	SMTPFrom      string
 	OTPWebhookURL string
+	NotifyURL     string
+	NotifyKey     string
 	CookieSecure  bool
 }
 
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+
+// envOrEmpty lets an explicitly empty variable disable a setting instead of falling back to the default.
+func envOrEmpty(k, d string) string {
+	if v, ok := os.LookupEnv(k); ok {
 		return v
 	}
 	return d
@@ -60,7 +70,7 @@ func loadConfig() Config {
 		FrappeKey:     os.Getenv("FRAPPE_API_KEY"),
 		FrappeSecret:  os.Getenv("FRAPPE_API_SECRET"),
 		GradingScale:  env("FRAPPE_GRADING_SCALE", "CBSE"),
-		StatusField:   env("FRAPPE_STATUS_FIELD", "custom_marks_status"),
+		StatusField:   envOrEmpty("FRAPPE_STATUS_FIELD", "custom_marks_status"),
 		AdmissionFld:  env("FRAPPE_ADMISSION_FIELD", "admission_number"),
 		AdminName:     env("ADMIN_NAME", "Exam Coordinator"),
 		AdminMobile:   os.Getenv("ADMIN_MOBILE"),
@@ -70,6 +80,8 @@ func loadConfig() Config {
 		SMTPPass:      os.Getenv("SMTP_PASS"),
 		SMTPFrom:      os.Getenv("SMTP_FROM"),
 		OTPWebhookURL: os.Getenv("OTP_WEBHOOK_URL"),
+		NotifyURL:     os.Getenv("NOTIFY_URL"),
+		NotifyKey:     os.Getenv("NOTIFY_API_KEY"),
 		CookieSecure:  os.Getenv("COOKIE_SECURE") == "1",
 	}
 }

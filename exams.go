@@ -43,6 +43,8 @@ type Exam struct {
 	OwnerName    string      `json:"owner_name"`
 	CreatedAt    string      `json:"created_at"`
 	LockedAt     string      `json:"locked_at"`
+	ApprovedAt   string      `json:"approved_at"`
+	ParentsSent  string      `json:"parents_sent_at"`
 	Subjects     []string    `json:"subjects"`
 	Components   []Component `json:"components"`
 	Label        string      `json:"label"`
@@ -92,6 +94,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/exams/{id}/marks", a.wrap("", a.apiSaveMarks))
 	mux.HandleFunc("POST /api/exams/{id}/finalize", a.wrap("", a.apiFinalize))
 	mux.HandleFunc("DELETE /api/exams/{id}", a.wrap("", a.apiDiscard))
+	mux.HandleFunc("GET /api/roster", a.wrap("", a.apiRoster))
+	mux.HandleFunc("POST /api/exams/{id}/notify-parents", a.wrap("", a.apiNotifyParents))
+	mux.HandleFunc("GET /api/exams/{id}/parents-status", a.wrap("", a.apiParentsStatus))
 	mux.HandleFunc("GET /api/exams/{id}/timeline", a.wrap("", a.apiTimeline))
 	mux.HandleFunc("POST /api/exams/{id}/corrections", a.wrap("", a.apiCorrectionRequest))
 	a.adminRoutes(mux)
@@ -265,9 +270,9 @@ func (a *App) loadExam(id int64) (*Exam, error) {
 	var combined, split int
 	var locked sql.NullString
 	err := a.db.QueryRow(`SELECT e.id,e.class_name,e.section,e.student_group,e.category,e.sub_type,e.exam_date,e.topic,e.combined,e.split,
-		e.max_total,e.status,e.owner_id,COALESCE(u.name,''),e.created_at,e.locked_at FROM exams e LEFT JOIN users u ON u.id=e.owner_id WHERE e.id=?`, id).
+		e.max_total,e.status,e.owner_id,COALESCE(u.name,''),e.created_at,e.locked_at,e.approved_at,e.parents_sent_at FROM exams e LEFT JOIN users u ON u.id=e.owner_id WHERE e.id=?`, id).
 		Scan(&e.ID, &e.ClassName, &e.Section, &e.StudentGroup, &e.Category, &e.SubType, &e.Date, &e.Topic, &combined, &split,
-			&e.MaxTotal, &e.Status, &e.OwnerID, &e.OwnerName, &e.CreatedAt, &locked)
+			&e.MaxTotal, &e.Status, &e.OwnerID, &e.OwnerName, &e.CreatedAt, &locked, &e.ApprovedAt, &e.ParentsSent)
 	if err != nil {
 		return nil, err
 	}
@@ -729,7 +734,7 @@ func (a *App) apiSaveMarks(w http.ResponseWriter, r *http.Request, u *User) erro
 		return err
 	}
 	if e.Status != "draft" {
-		return conflict("This test is locked. Request a correction for individual students instead.", nil)
+		return conflict("This test is locked. Only an administrator can edit it.", nil)
 	}
 	var in struct{ Entries []Entry }
 	if err := decode(r, &in); err != nil {
@@ -905,13 +910,10 @@ func (a *App) apiFinalize(w http.ResponseWriter, r *http.Request, u *User) error
 	if err := addTimeline(tx, e.ID, u.Name, "locked", stats); err != nil {
 		return err
 	}
-	if err := enqueue(tx, "exam", e.ID, 0, "", 0, true); err != nil {
-		return err
-	}
+	// The marksheet is pushed to Frappe only after an administrator approves it.
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	a.wake()
 	writeJSON(w, 200, map[string]any{"ok": true, "stats": stats})
 	return nil
 }
@@ -973,6 +975,9 @@ func (a *App) apiTimeline(w http.ResponseWriter, r *http.Request, u *User) error
 // ---------- corrections ----------
 
 func (a *App) apiCorrectionRequest(w http.ResponseWriter, r *http.Request, u *User) error {
+	if !u.IsAdmin() {
+		return forbidden("This marksheet is locked. Only an administrator can edit it.")
+	}
 	e, set, err := a.examForUser(r, u)
 	if err != nil {
 		return err
@@ -1029,20 +1034,32 @@ func (a *App) apiCorrectionRequest(w http.ResponseWriter, r *http.Request, u *Us
 	if dup > 0 {
 		return conflict("A correction request for this student is already awaiting approval.", nil)
 	}
-	res, err := tx.Exec(`INSERT INTO corrections(exam_id,student_id,subject,old_status,old_comps,old_total,new_status,new_comps,new_total,reason,requested_by,requested_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, in.StudentID, in.Subject, oldStatus, oldComps, nullF(oldTotal), in.Status, string(newJSON), *total, in.Reason, u.ID, nowStr())
+	// Administrator edits apply immediately; the correction row is kept as the audit record and pushed to Frappe.
+	res, err := tx.Exec(`INSERT INTO corrections(exam_id,student_id,subject,old_status,old_comps,old_total,new_status,new_comps,new_total,reason,state,requested_by,requested_at,decided_by,decided_at,decision_note)
+		VALUES(?,?,?,?,?,?,?,?,?,?,'approved',?,?,?,?,?)`, e.ID, in.StudentID, in.Subject, oldStatus, oldComps, nullF(oldTotal), in.Status, string(newJSON), *total, in.Reason,
+		u.ID, nowStr(), u.ID, nowStr(), "Edited directly by administrator")
 	if err != nil {
 		return err
 	}
 	cid, _ := res.LastInsertId()
-	if err := addTimeline(tx, e.ID, u.Name, "correction_requested", map[string]any{
+	if _, err := tx.Exec(`UPDATE results SET status=?,comps=?,total=?,updated_at=?,updated_by=? WHERE exam_id=? AND student_id=? AND subject=?`,
+		in.Status, string(newJSON), *total, nowStr(), u.ID, e.ID, in.StudentID, in.Subject); err != nil {
+		return err
+	}
+	if e.ApprovedAt != "" {
+		if err := enqueue(tx, "correction", e.ID, in.StudentID, in.Subject, cid); err != nil {
+			return err
+		}
+	}
+	if err := addTimeline(tx, e.ID, u.Name, "correction_approved", map[string]any{
 		"correction_id": cid, "student": stName, "roll_no": roll, "subject": in.Subject,
-		"old": displayResult(oldStatus, oldTotal.Float64), "new": displayResult(in.Status, *total), "reason": in.Reason}); err != nil {
+		"old": displayResult(oldStatus, oldTotal.Float64), "new": displayResult(in.Status, *total), "note": "Edited by administrator: " + in.Reason}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	a.wake()
 	writeJSON(w, 201, map[string]any{"ok": true, "correction_id": cid})
 	return nil
 }

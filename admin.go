@@ -19,6 +19,13 @@ func (a *App) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/users/{id}", a.wrap("admin", a.adminUserUpdate))
 	mux.HandleFunc("GET /api/admin/users/{id}/allocations", a.wrap("admin", a.adminAllocGet))
 	mux.HandleFunc("PUT /api/admin/users/{id}/allocations", a.wrap("admin", a.adminAllocPut))
+	mux.HandleFunc("POST /api/admin/users/import", a.wrap("admin", a.adminUsersImport))
+	mux.HandleFunc("POST /api/admin/users/dummy", a.wrap("admin", a.adminDummyTeachers))
+	mux.HandleFunc("GET /api/admin/approvals", a.wrap("admin", a.adminApprovals))
+	mux.HandleFunc("POST /api/admin/exams/{id}/approve", a.wrap("admin", a.adminApprove))
+	mux.HandleFunc("GET /api/admin/analysis", a.wrap("admin", a.adminAnalysis))
+	mux.HandleFunc("POST /api/admin/students/import", a.wrap("admin", a.adminStudentsImport))
+	mux.HandleFunc("GET /api/admin/students", a.wrap("admin", a.adminStudents))
 	mux.HandleFunc("POST /api/admin/sync/master", a.wrap("admin", a.adminMasterSync))
 	mux.HandleFunc("GET /api/admin/corrections", a.wrap("admin", a.adminCorrections))
 	mux.HandleFunc("POST /api/admin/corrections/{id}/{action}", a.wrap("admin", a.adminCorrectionDecide))
@@ -33,7 +40,11 @@ func (a *App) syncHealth(examID int64, status string) map[string]any {
 		a.db.QueryRow(`SELECT last_error FROM jobs WHERE exam_id=? AND state IN('pending','running') AND last_error<>'' ORDER BY id DESC LIMIT 1`, examID).Scan(&lastErr)
 	}
 	h := map[string]any{"pending_jobs": pending, "last_error": lastErr}
+	var approvedAt string
+	a.db.QueryRow(`SELECT approved_at FROM exams WHERE id=?`, examID).Scan(&approvedAt)
 	switch {
+	case status == "locked" && approvedAt == "":
+		h["state"], h["label"] = "yellow", "Submitted: awaiting admin approval"
 	case retrying > 0 || (status == "locked" && pending > 0):
 		h["state"], h["label"] = "red", "Sync Pending (Auto-Retrying)"
 	case status == "draft":
@@ -52,6 +63,7 @@ func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, u *User) err
 		{"teachers", `SELECT COUNT(*) FROM users WHERE role='teacher' AND active=1`},
 		{"drafts", `SELECT COUNT(*) FROM exams WHERE status='draft'`},
 		{"locked", `SELECT COUNT(*) FROM exams WHERE status='locked'`},
+		{"pending_approvals", `SELECT COUNT(*) FROM exams WHERE status='locked' AND approved_at=''`},
 		{"pending_corrections", `SELECT COUNT(*) FROM corrections WHERE state='pending'`},
 		{"pending_jobs", `SELECT COUNT(*) FROM jobs WHERE state IN('pending','running')`},
 	} {
@@ -454,7 +466,7 @@ func (a *App) adminAllocMatrix(w http.ResponseWriter, r *http.Request, u *User) 
 		}
 	}
 	rows.Close()
-	tr, err := a.db.Query(`SELECT id, name FROM users WHERE role='teacher' AND active=1 ORDER BY name`)
+	tr, err := a.db.Query(`SELECT id, name || CASE WHEN COALESCE(mobile,'')<>'' THEN ' (' || mobile || ')' ELSE '' END FROM users WHERE role='teacher' AND active=1 ORDER BY name`)
 	if err != nil {
 		return err
 	}

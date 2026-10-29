@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -59,17 +60,40 @@ func (a *App) findUser(ident string) (*User, error) {
 	return u, err
 }
 
+// bootstrapAdmin ensures every number in ADMIN_MOBILE (comma-separated) exists as an active administrator.
 func (a *App) bootstrapAdmin() error {
-	var n int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n); err != nil || n > 0 {
-		return err
-	}
 	if a.cfg.AdminMobile == "" && a.cfg.AdminEmail == "" {
-		log.Printf("WARNING: no admin exists; set ADMIN_MOBILE or ADMIN_EMAIL to create the first administrator")
+		var n int
+		if err := a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n); err == nil && n == 0 {
+			log.Printf("WARNING: no admin exists; set ADMIN_MOBILE or ADMIN_EMAIL to create the first administrator")
+		}
 		return nil
 	}
-	_, err := a.db.Exec(`INSERT INTO users(name,mobile,email,role,created_at) VALUES(?,?,?,?,?)`,
-		a.cfg.AdminName, nullIfEmpty(normIdent(a.cfg.AdminMobile)), nullIfEmpty(normIdent(a.cfg.AdminEmail)), "admin", nowStr())
+	for _, m := range strings.Split(a.cfg.AdminMobile, ",") {
+		if m = normIdent(m); m != "" {
+			if err := a.ensureAdmin(m, ""); err != nil {
+				return err
+			}
+		}
+	}
+	if e := normIdent(a.cfg.AdminEmail); e != "" {
+		return a.ensureAdmin("", e)
+	}
+	return nil
+}
+
+func (a *App) ensureAdmin(mobile, email string) error {
+	var id int64
+	err := a.db.QueryRow(`SELECT id FROM users WHERE (mobile=? AND ?<>'') OR (email=? AND ?<>'')`, mobile, mobile, email, email).Scan(&id)
+	if err == nil {
+		_, err = a.db.Exec(`UPDATE users SET role='admin', active=1 WHERE id=?`, id)
+		return err
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, err = a.db.Exec(`INSERT INTO users(name,mobile,email,role,created_at) VALUES(?,?,?,?,?)`,
+		a.cfg.AdminName, nullIfEmpty(mobile), nullIfEmpty(email), "admin", nowStr())
 	return err
 }
 
@@ -82,9 +106,9 @@ func nullIfEmpty(s string) any {
 
 func (a *App) deliverOTP(u *User, ident, code string) {
 	if a.cfg.DevOTP {
-		log.Printf("DEV OTP for %s: %s", ident, code)
+		log.Printf("DEV WorkCode for %s: %s", ident, code)
 	}
-	msg := fmt.Sprintf("Your marks-entry login code is %s (valid 5 minutes).", code)
+	msg := fmt.Sprintf("Your GCM UPMARK WorkCode is *%s*. It is valid for 5 minutes. Do not share it with anyone.\n_— GCM Convent School_", code)
 	if a.cfg.OTPWebhookURL != "" {
 		body, _ := json.Marshal(map[string]string{"to": ident, "message": msg, "code": code})
 		go func() {
@@ -96,13 +120,16 @@ func (a *App) deliverOTP(u *User, ident, code string) {
 			resp.Body.Close()
 		}()
 	}
+	if a.cfg.NotifyURL != "" && a.cfg.NotifyKey != "" && u.Mobile != "" {
+		a.sendWhatsApp(u.Mobile, msg)
+	}
 	if a.cfg.SMTPHost != "" && u.Email != "" {
 		go func() {
 			var auth smtp.Auth
 			if a.cfg.SMTPUser != "" {
 				auth = smtp.PlainAuth("", a.cfg.SMTPUser, a.cfg.SMTPPass, strings.Split(a.cfg.SMTPHost, ":")[0])
 			}
-			m := "From: " + a.cfg.SMTPFrom + "\r\nTo: " + u.Email + "\r\nSubject: Your login code\r\n\r\n" + msg
+			m := "From: " + a.cfg.SMTPFrom + "\r\nTo: " + u.Email + "\r\nSubject: Your GCM UPMARK WorkCode\r\n\r\n" + msg
 			if err := smtp.SendMail(a.cfg.SMTPHost, auth, a.cfg.SMTPFrom, []string{u.Email}, []byte(m)); err != nil {
 				log.Printf("otp smtp: %v", err)
 			}
@@ -270,4 +297,39 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 	log.Printf("internal error: %v", err)
 	writeJSON(w, 500, map[string]any{"error": "Internal error"})
+}
+
+// notifySend posts one message through the school's WhatsApp notify gateway (Bearer auth) and reports the result.
+func (a *App) notifySend(mobile, msg string) error {
+	if a.cfg.NotifyURL == "" || a.cfg.NotifyKey == "" {
+		return fmt.Errorf("WhatsApp gateway is not configured")
+	}
+	body, _ := json.Marshal(map[string]string{"mobile": mobile, "message": msg})
+	req, err := http.NewRequest(http.MethodPost, a.cfg.NotifyURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.cfg.NotifyKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return fmt.Errorf("gateway returned %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// sendWhatsApp sends a message in the background (used for WorkCodes).
+func (a *App) sendWhatsApp(mobile, msg string) {
+	go func() {
+		if err := a.notifySend(mobile, msg); err != nil {
+			log.Printf("whatsapp: %v", err)
+			return
+		}
+		log.Printf("whatsapp: message sent to ***%s", mobile[len(mobile)-4:])
+	}()
 }

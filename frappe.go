@@ -142,9 +142,12 @@ func (a *App) masterScheduler(ctx context.Context) {
 	for {
 		if a.frappe.Enabled() {
 			last, _ := time.Parse(time.RFC3339, a.setting("last_master_sync"))
-			if time.Since(last) >= 7*24*time.Hour {
+			// also re-pull once after the student-detail upgrade, so existing databases get parent/gender/DOB data
+			if time.Since(last) >= 7*24*time.Hour || a.setting("details_sync_v1") == "" {
 				if _, err := a.masterSync(); err != nil {
 					log.Printf("scheduled master sync: %v", err)
+				} else {
+					a.setSetting("details_sync_v1", "1")
 				}
 			}
 		}
@@ -175,6 +178,73 @@ func (a *App) masterSync() (map[string]any, error) {
 
 type pulledStudent struct {
 	frappeID, name, roll, admission, group string
+	gender, dob                            string
+	fatherName, fatherMobile               string
+	motherName, motherMobile               string
+}
+
+// studentExtra is the per-student detail pulled from Frappe alongside the roster.
+type studentExtra struct {
+	admission, gender, dob   string
+	fatherName, fatherMobile string
+	motherName, motherMobile string
+}
+
+// ListChild lists a child table (e.g. Student Guardian) in one call.
+func (f *Frappe) ListChild(doctype, parent string, fields []string) ([]frappeDoc, error) {
+	q := url.Values{"limit_page_length": {"0"}, "parent": {parent}}
+	fb, _ := json.Marshal(fields)
+	q.Set("fields", string(fb))
+	var out struct{ Data []frappeDoc }
+	err := f.do("GET", "/api/resource/"+url.PathEscape(doctype), q, nil, &out)
+	return out.Data, err
+}
+
+// pullStudentExtras fetches admission number, gender, date of birth and parent details for every student.
+func (a *App) pullStudentExtras() map[string]*studentExtra {
+	f := a.frappe
+	out := map[string]*studentExtra{}
+	fields := []string{"name", "gender", "date_of_birth", "custom_father_mobile_number", "custom_mother_mobile_number"}
+	if a.cfg.AdmissionFld != "" {
+		fields = append(fields, a.cfg.AdmissionFld)
+	}
+	rows, err := f.List("Student", fields, nil)
+	if err != nil { // a custom field may be missing on this site: retry with the standard ones
+		rows, err = f.List("Student", []string{"name", "gender", "date_of_birth"}, nil)
+	}
+	if err != nil {
+		return out
+	}
+	for _, r := range rows {
+		x := &studentExtra{gender: str(r, "gender"), dob: str(r, "date_of_birth"),
+			fatherMobile: normIdent(str(r, "custom_father_mobile_number")), motherMobile: normIdent(str(r, "custom_mother_mobile_number"))}
+		if a.cfg.AdmissionFld != "" {
+			x.admission = str(r, a.cfg.AdmissionFld)
+		}
+		out[str(r, "name")] = x
+	}
+	if gs, err := f.ListChild("Student Guardian", "Student", []string{"parent", "guardian_name", "relation", "guardian_mobile_number"}); err == nil {
+		for _, g := range gs {
+			x := out[str(g, "parent")]
+			if x == nil {
+				continue
+			}
+			mob := normIdent(str(g, "guardian_mobile_number"))
+			switch strings.ToLower(str(g, "relation")) {
+			case "father":
+				x.fatherName = str(g, "guardian_name")
+				if mob != "" {
+					x.fatherMobile = mob
+				}
+			case "mother":
+				x.motherName = str(g, "guardian_name")
+				if mob != "" {
+					x.motherMobile = mob
+				}
+			}
+		}
+	}
+	return out
 }
 
 func (a *App) doMasterSync() (map[string]any, error) {
@@ -183,14 +253,7 @@ func (a *App) doMasterSync() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	admission := map[string]string{}
-	if a.cfg.AdmissionFld != "" {
-		if rows, err := f.List("Student", []string{"name", a.cfg.AdmissionFld}, nil); err == nil {
-			for _, r := range rows {
-				admission[str(r, "name")] = str(r, a.cfg.AdmissionFld)
-			}
-		} // field may not exist on this site: fall back to the Student ID
-	}
+	extras := a.pullStudentExtras()
 	var students []pulledStudent
 	groupNames := map[string]bool{}
 	for _, g := range groups {
@@ -210,11 +273,16 @@ func (a *App) doMasterSync() (map[string]any, error) {
 				continue
 			}
 			sid := str(m, "student")
-			adm := admission[sid]
+			x := extras[sid]
+			if x == nil {
+				x = &studentExtra{}
+			}
+			adm := x.admission
 			if adm == "" {
 				adm = sid
 			}
-			students = append(students, pulledStudent{sid, str(m, "student_name"), str(m, "group_roll_number"), adm, name})
+			students = append(students, pulledStudent{sid, str(m, "student_name"), str(m, "group_roll_number"), adm, name,
+				x.gender, x.dob, x.fatherName, x.fatherMobile, x.motherName, x.motherMobile})
 		}
 	}
 	courses, err := f.List("Course", []string{"name"}, nil)
@@ -268,8 +336,8 @@ func (a *App) doMasterSync() (map[string]any, error) {
 		err := tx.QueryRow(`SELECT id,name,roll_no,admission_no,active FROM students WHERE student_group=? AND frappe_id=?`, s.group, s.frappeID).Scan(&id, &oname, &oroll, &oadm, &oactive)
 		switch {
 		case err == sql.ErrNoRows:
-			_, err = tx.Exec(`INSERT INTO students(frappe_id,admission_no,roll_no,roll_sort,name,student_group,class_name,section) VALUES(?,?,?,?,?,?,?,?)`,
-				s.frappeID, s.admission, s.roll, rollSort(s.roll), s.name, s.group, class, section)
+			_, err = tx.Exec(`INSERT INTO students(frappe_id,admission_no,roll_no,roll_sort,name,student_group,class_name,section,gender,dob,father_name,father_mobile,mother_name,mother_mobile) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				s.frappeID, s.admission, s.roll, rollSort(s.roll), s.name, s.group, class, section, s.gender, s.dob, s.fatherName, s.fatherMobile, s.motherName, s.motherMobile)
 			added++
 		case err != nil:
 			return nil, err
@@ -277,8 +345,8 @@ func (a *App) doMasterSync() (map[string]any, error) {
 			if oname != s.name || oroll != s.roll || oadm != s.admission || oactive == 0 {
 				updated++
 			}
-			_, err = tx.Exec(`UPDATE students SET admission_no=?,roll_no=?,roll_sort=?,name=?,class_name=?,section=?,active=1 WHERE id=?`,
-				s.admission, s.roll, rollSort(s.roll), s.name, class, section, id)
+			_, err = tx.Exec(`UPDATE students SET admission_no=?,roll_no=?,roll_sort=?,name=?,class_name=?,section=?,gender=?,dob=?,father_name=?,father_mobile=?,mother_name=?,mother_mobile=?,active=1 WHERE id=?`,
+				s.admission, s.roll, rollSort(s.roll), s.name, class, section, s.gender, s.dob, s.fatherName, s.fatherMobile, s.motherName, s.motherMobile, id)
 		}
 		if err != nil {
 			return nil, err
@@ -286,7 +354,7 @@ func (a *App) doMasterSync() (map[string]any, error) {
 		seen[s.group+"\x00"+s.frappeID] = true
 	}
 	// students no longer present in any active group are retired (kept for history, hidden from rosters)
-	rows, err := tx.Query(`SELECT id, student_group, frappe_id FROM students WHERE active=1`)
+	rows, err := tx.Query(`SELECT id, student_group, frappe_id FROM students WHERE active=1 AND frappe_id NOT LIKE 'local-%'`)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +508,7 @@ func (a *App) syncExam(examID int64) error {
 		}
 		criteria = append(criteria, frappeDoc{"assessment_criteria": c.Name, "maximum_score": c.Max})
 	}
-	locked := e.Status == "locked"
+	locked := e.Status == "locked" && e.ApprovedAt != ""
 	for _, subj := range e.Subjects {
 		plan, err := a.ensurePlan(e, subj, criteria, locked)
 		if err != nil {
