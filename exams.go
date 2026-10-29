@@ -94,6 +94,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/exams/{id}/marks", a.wrap("", a.apiSaveMarks))
 	mux.HandleFunc("POST /api/exams/{id}/finalize", a.wrap("", a.apiFinalize))
 	mux.HandleFunc("DELETE /api/exams/{id}", a.wrap("", a.apiDiscard))
+	mux.HandleFunc("GET /api/reports/students", a.wrap("", a.apiStudentReports))
 	mux.HandleFunc("GET /api/roster", a.wrap("", a.apiRoster))
 	mux.HandleFunc("POST /api/exams/{id}/notify-parents", a.wrap("", a.apiNotifyParents))
 	mux.HandleFunc("GET /api/exams/{id}/parents-status", a.wrap("", a.apiParentsStatus))

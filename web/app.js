@@ -86,10 +86,10 @@ window.addEventListener('hashchange', () => { if (S.me) render(); });
 
 const NAV = {
   teacher: () => [
-    { sec: 'WORKSPACE', items: [['dashboard', 'Dashboard', 'grid'], ['new', 'New / Open Test', 'plus'], ['classes', 'My Classes', 'school'], ['tests', 'All Tests', 'list'], ['drafts', 'My Drafts', 'clock', S.data && S.data.stats.drafts]] },
+    { sec: 'WORKSPACE', items: [['dashboard', 'Dashboard', 'grid'], ['new', 'New / Open Test', 'plus'], ['classes', 'My Classes', 'school'], ['reports', 'Student Reports', 'chart'], ['tests', 'All Tests', 'list'], ['drafts', 'My Drafts', 'clock', S.data && S.data.stats.drafts]] },
   ],
   admin: () => [
-    { sec: 'WORKSPACE', items: [['a/dashboard', 'Dashboard', 'grid'], ['a/marks', 'Marks Explorer', 'list'], ['a/approvals', 'Approvals', 'inbox', S.counts && S.counts.counts.pending_approvals], ['a/analysis', 'Weekly Analysis', 'chart'], ['a/corrections', 'Corrections', 'inbox', S.counts && S.counts.counts.pending_corrections]] },
+    { sec: 'WORKSPACE', items: [['a/dashboard', 'Dashboard', 'grid'], ['a/marks', 'Marks Explorer', 'list'], ['a/approvals', 'Approvals', 'inbox', S.counts && S.counts.counts.pending_approvals], ['a/analysis', 'Weekly Analysis', 'chart'], ['a/reports', 'Student Reports', 'users'], ['a/corrections', 'Corrections', 'inbox', S.counts && S.counts.counts.pending_corrections]] },
     { sec: 'SCHOOL', items: [['a/classes', 'Classes & Sections', 'school'], ['a/students', 'Students', 'users'], ['a/allocations', 'Teacher Allocation', 'layers'], ['a/teachers', 'Teachers', 'users']] },
     { sec: 'ERP', items: [['a/sync', 'Frappe Sync', 'refresh']] },
   ],
@@ -133,8 +133,8 @@ async function render() {
     const r = rawRoute();
     if (r.startsWith('exam/')) return openExam(+r.slice(5), { noPush: true });
     const pages = isAdmin()
-      ? { 'a/marks': pgAdminMarks, 'a/approvals': pgAdminApprovals, 'a/analysis': pgAdminAnalysis, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/students': pgAdminStudents, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync }
-      : { classes: pgClasses, new: () => viewCascade('class'), tests: () => pgTests(''), drafts: () => pgTests('draft') };
+      ? { 'a/marks': pgAdminMarks, 'a/approvals': pgAdminApprovals, 'a/analysis': pgAdminAnalysis, 'a/reports': pgReports, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/students': pgAdminStudents, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync }
+      : { classes: pgClasses, reports: pgReports, new: () => viewCascade('class'), tests: () => pgTests(''), drafts: () => pgTests('draft') };
     const fn = pages[r] || (isAdmin() ? pgAdminDashboard : pgDashboard);
     await fn();
   } catch (e) { if (S.me) shellMount({ title: 'Something went wrong', content: h('div', { class: 'banner bad' }, e.message) }); }
@@ -758,6 +758,7 @@ async function pgAdminMarks() {
   shellMount({ title: 'Marks Explorer', sub: 'Every marking sheet in the school, with sync health', content: [h('div', { class: 'filters' }, fc, fs, ft, fst), h('div', { class: 'card' }, out)] });
   await load();
 }
+const CF = { state: '', q: '' };
 async function pgAdminCorrections() {
   const d = await api('GET', '/admin/corrections');
   const decide = (c, action) => {
@@ -765,12 +766,26 @@ async function pgAdminCorrections() {
     const ov = overlay([h('h2', { style: 'margin-top:0' }, (action === 'approve' ? 'Approve' : 'Reject') + ' correction'), h('p', {}, 'Roll ' + c.roll_no + ' · ' + c.student + ': ', h('b', {}, c.old + ' → ' + c.new)), note,
       h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { class: 'btn grow' + (action === 'reject' ? ' danger' : ''), onclick: async () => { try { await api('POST', '/admin/corrections/' + c.id + '/' + action, { note: note.value }); ov.remove(); toast(action === 'approve' ? 'Approved — re-syncing to ERP' : 'Rejected'); render(); } catch (e) { toast(e.message, true); } } }, 'Confirm'), h('button', { class: 'btn ghost', onclick: () => ov.remove() }, 'Cancel'))]);
   };
-  shellMount({ title: 'Corrections', sub: 'Single-student correction requests', content: [h('h2', { style: 'font-size:1.1rem;margin:0 0 10px' }, 'Correction requests inbox'), d.corrections.length === 0 && h('div', { class: 'empty' }, 'No requests.'),
-    d.corrections.map((c) => h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, 'Roll ' + c.roll_no + ' · ' + c.student + ' (Adm. ' + c.admission_no + ')'), h('div', { class: 'small mute' }, c.label + ' · ' + c.subject)),
-      h('div', { style: 'font-size:1.4rem;font-weight:800' }, c.old + ' → ' + c.new)),
-      h('p', {}, '“' + c.reason + '”'), h('div', { class: 'small mute' }, 'Requested by ' + c.requested_by + ' · ' + fmtTs(c.requested_at)),
-      c.state === 'pending' ? h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn sm', onclick: () => decide(c, 'approve') }, 'Approve'), h('button', { class: 'btn sm danger', onclick: () => decide(c, 'reject') }, 'Reject'), h('button', { class: 'btn sm ghost', onclick: () => showTimeline(c.exam_id) }, 'Timeline'))
-        : h('div', { class: 'small' }, h('span', { class: 'badge' }, c.state), ' by ' + c.decided_by + ' · ' + fmtTs(c.decided_at))))] });
+  const list = h('div');
+  const chips = h('div', { class: 'row' });
+  const q = h('input', { type: 'search', placeholder: 'Search student, roll, test, subject, reason…', value: CF.q });
+  const bar = h('div', { class: 'row', style: 'margin-bottom:14px;gap:10px;flex-wrap:wrap' }, chips, h('div', { class: 'grow' }, q));
+  const stateLbl = (c) => c.state === 'pending' ? 'Pending' : c.state === 'rejected' ? 'Rejected' : (c.decision_note === 'Edited directly by administrator' ? 'Edited by admin' : 'Approved');
+  const draw = () => {
+    const t = CF.q.trim().toLowerCase();
+    const rows = d.corrections.filter((c) => (!CF.state || c.state === CF.state) && (!t || [c.student, c.roll_no, c.admission_no, c.label, c.subject, c.reason, c.requested_by].join(' ').toLowerCase().includes(t)));
+    fill(chips, [['', 'All (' + d.corrections.length + ')'], ['pending', 'Pending'], ['approved', 'Applied'], ['rejected', 'Rejected']].map(([v, l]) => h('button', { class: 'pill sm' + (CF.state === v ? ' on' : ''), onclick: () => { CF.state = v; draw(); } }, l)));
+    fill(list, rows.length === 0 ? h('div', { class: 'empty' }, 'No records.') : h('div', { class: 'card' }, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' },
+      h('thead', {}, h('tr', {}, ['When', 'Student', 'Test · Subject', 'Change', 'Reason', 'By', 'Status', ''].map((x) => h('th', {}, x)))),
+      h('tbody', {}, rows.map((c) => h('tr', {}, h('td', {}, fmtTs(c.decided_at || c.requested_at)), h('td', {}, h('b', {}, c.student), h('div', { class: 'small mute' }, 'Roll ' + c.roll_no + ' · Adm. ' + c.admission_no)),
+        h('td', {}, c.label, h('div', { class: 'small mute' }, c.subject)), h('td', {}, h('b', {}, c.old + ' → ' + c.new)), h('td', {}, c.reason),
+        h('td', {}, c.decided_by || c.requested_by), h('td', {}, h('span', { class: 'badge' }, stateLbl(c))),
+        h('td', {}, c.state === 'pending' ? h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => decide(c, 'approve') }, 'Approve'), h('button', { class: 'btn sm danger', onclick: () => decide(c, 'reject') }, 'Reject'))
+          : h('button', { class: 'btn sm ghost', onclick: () => openExam(c.exam_id) }, 'Open sheet'), ' ', h('button', { class: 'btn sm ghost', onclick: () => showTimeline(c.exam_id) }, 'Timeline'))))))))); 
+  };
+  q.oninput = () => { CF.q = q.value; clearTimeout(q.t); q.t = setTimeout(() => { draw(); }, 150); };
+  shellMount({ title: 'Corrections', sub: 'Every edit made to a submitted marksheet, with who, when and why', content: [h('div', { class: 'banner' }, 'Teachers cannot change a marksheet once submitted. Open any submitted sheet and click a student to edit the score (administrator); each edit is recorded here automatically.'), bar, list] });
+  draw();
 }
 const A = { class_name: null, section: null }; // allocation page selection
 async function pgAdminClasses() {
@@ -989,3 +1004,52 @@ async function boot() {
 }
 window.addEventListener('beforeunload', () => { if (W && W.dirty && W.dirty.size) stash(); });
 boot();
+
+
+// ---------- per-student weekly report (screen + print) ----------
+const R = { cls: null, sid: '', days: 7 };
+async function pgReports() {
+  const scope = await api('GET', '/scope');
+  const groups = scope.groups;
+  if (!R.cls || !groups.find((g) => g.class_name === R.cls.class_name && g.section === R.cls.section)) R.cls = groups[0] || null;
+  const out = h('div');
+  const clsSel = h('select', { onchange: () => { R.cls = groups[+clsSel.value]; R.sid = ''; render(); } }, groups.map((g, i) => h('option', { value: i, selected: R.cls && g.class_name === R.cls.class_name && g.section === R.cls.section }, g.label)));
+  const daySel = h('select', { onchange: () => { R.days = +daySel.value; load(); } }, [[7, 'Last 7 days'], [14, 'Last 14 days'], [30, 'Last 30 days']].map(([v, l]) => h('option', { value: v, selected: R.days === v }, l)));
+  const stuSel = h('select', { onchange: () => { R.sid = stuSel.value; load(); } }, h('option', { value: '' }, 'Whole class'));
+  const printBtn = h('button', { class: 'btn', onclick: () => window.print() }, 'Print report');
+  shellMount({ title: 'Student Reports', sub: 'Weekly progress report per student, with print', content: [
+    groups.length === 0 ? h('div', { class: 'card' }, h('div', { class: 'empty' }, 'No classes available.')) :
+      [h('div', { class: 'row noprint', style: 'margin-bottom:14px;gap:10px;flex-wrap:wrap' }, clsSel, stuSel, daySel, printBtn), out]] });
+  if (!R.cls) return;
+  const base = () => '/reports/students?class_name=' + encodeURIComponent(R.cls.class_name) + '&section=' + encodeURIComponent(R.cls.section) + '&days=' + R.days;
+  let all = null;
+  const load = async () => {
+    if (!all || all.key !== base()) {
+      const d = await api('GET', base()); all = { key: base(), d };
+      fill(stuSel, h('option', { value: '' }, 'Whole class (' + d.students.length + ')'), d.students.map((x) => h('option', { value: x.id, selected: String(x.id) === String(R.sid) }, (x.roll_no ? x.roll_no + '. ' : '') + x.name)));
+    }
+    const d = all.d;
+    const list = d.students.filter((x) => !R.sid || String(x.id) === String(R.sid));
+    fill(out, list.length === 0 ? h('div', { class: 'card' }, h('div', { class: 'empty' }, 'No students.')) : list.map((x) => reportCard(x, d)));
+  };
+  await load();
+}
+
+function reportCard(x, d) {
+  const tag = (t) => t ? h('span', { class: 'rtag', style: 'background:' + TAGS[t][1] }, TAGS[t][0]) : h('span', { class: 'mute' }, '-');
+  const bars = x.subjects.map((s) => h('div', { class: 'rbar' }, h('div', { class: 'rl' }, s.subject),
+    h('div', { class: 'rtrack' }, h('div', { class: 'rfill', style: 'width:' + Math.min(100, s.avg) + '%;background:' + TAGS[s.tag][1] }), h('div', { class: 'rcls', style: 'left:' + Math.min(100, s.class_avg) + '%', title: 'Class average ' + s.class_avg + '%' })),
+    h('div', { class: 'rv' }, s.avg + '%')));
+  return h('section', { class: 'card rcard' },
+    h('div', { class: 'rhead' }, h('div', { class: 'rschool' }, 'GCM CONVENT SCHOOL'), h('div', { class: 'rtitle' }, 'Weekly Progress Report'), h('div', { class: 'rper' }, fmtDate(d.from) + ' – ' + fmtDate(d.to))),
+    h('div', { class: 'rinfo' }, h('div', {}, h('small', {}, 'Student'), h('b', {}, x.name)), h('div', {}, h('small', {}, 'Class'), h('b', {}, d.class)), h('div', {}, h('small', {}, 'Roll no.'), h('b', {}, x.roll_no || '-')), h('div', {}, h('small', {}, 'Admission no.'), h('b', {}, x.admission_no || '-')),
+      x.father_name && h('div', {}, h('small', {}, 'Parent / Guardian'), h('b', {}, x.father_name))),
+    x.tests + x.absent === 0 ? h('div', { class: 'empty' }, 'No approved tests in this period.') : [
+      h('div', { class: 'rsum' }, h('div', {}, h('small', {}, 'Overall average'), h('b', { class: 'big' }, x.tests ? x.avg + '%' : '-')), h('div', {}, h('small', {}, 'Performance'), tag(x.tag)), h('div', {}, h('small', {}, 'Tests taken'), h('b', {}, x.tests)), h('div', {}, h('small', {}, 'Absent / exempt'), h('b', {}, x.absent))),
+      x.subjects.length > 0 && [h('h4', {}, 'Subject-wise average'), h('div', { class: 'rbars' }, bars), h('div', { class: 'small mute' }, 'Coloured bar = student · marker line = class average')],
+      h('h4', {}, 'Test details'),
+      h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Date', 'Test', 'Subject', 'Marks', '%', 'Class avg', 'Remark'].map((c) => h('th', {}, c)))),
+        h('tbody', {}, x.detail.map((t) => h('tr', {}, h('td', {}, fmtDate(t.date)), h('td', {}, t.test), h('td', {}, t.subject),
+          h('td', {}, t.status ? (t.status === 'AB' ? 'Absent' : 'Exempt') : t.score + ' / ' + t.max), h('td', {}, t.status ? '-' : t.pct + '%'), h('td', {}, t.status ? '-' : t.class_avg + '%'), h('td', {}, tag(t.tag))))))],
+    h('div', { class: 'rsign' }, h('div', {}, 'Class Teacher'), h('div', {}, 'Parent / Guardian'), h('div', {}, 'Principal')));
+}

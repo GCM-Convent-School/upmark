@@ -136,3 +136,31 @@ details{border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:
 .lg-link{background:none;border:0;color:var(--brand);font-weight:600;cursor:pointer;padding:6px 0;font-size:.9rem}.lg-link:disabled{color:var(--mute);cursor:default}
 .lg-foot{color:var(--mute);font-size:.78rem}
 @media (max-width:860px){.lgn{grid-template-columns:1fr}.lg-hero{padding:32px 24px 24px;border-right:0;border-bottom:1px solid var(--line);gap:8px}.lg-hero h1{font-size:1.6rem}.lg-points{display:none}.lg-tag{margin:0}.lg-mark{width:44px;height:44px;font-size:1.05rem}.lg-panel{justify-content:flex-start;padding-top:28px}}
+
+/* student report */
+.rhead{text-align:center;border-bottom:2px solid currentColor;padding-bottom:10px;margin-bottom:12px}
+.rschool{font-size:24px;font-weight:800;letter-spacing:2px}
+.rtitle{font-size:15px;font-weight:600;margin-top:2px}
+.rper{font-size:12px;opacity:.7}
+.rinfo,.rsum{display:flex;flex-wrap:wrap;gap:8px 28px;margin:10px 0}
+.rinfo small,.rsum small{display:block;opacity:.65;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.rsum .big{font-size:24px}
+.rtag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;color:#10150a}
+.rbars{display:grid;gap:8px;margin:8px 0}
+.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:10px;align-items:center;font-size:13px}
+.rtrack{position:relative;height:14px;background:rgba(128,128,128,.2);border-radius:7px}
+.rfill{height:100%;border-radius:7px}
+.rcls{position:absolute;top:-3px;width:2px;height:20px;background:currentColor}
+.rcard h4{margin:14px 0 6px}
+.rsign{display:none;justify-content:space-between;margin-top:48px;font-size:12px}
+.rsign div{border-top:1px solid #000;padding-top:4px;width:28%;text-align:center}
+@media print{
+  .side,.top,.noprint,.toast,.nav{display:none!important}
+  body,.app,main,.page{background:#fff!important;color:#000!important;display:block!important;margin:0!important;padding:0!important;height:auto!important;overflow:visible!important}
+  .rcard{box-shadow:none!important;border:0!important;background:#fff!important;color:#000!important;page-break-after:always;break-inside:avoid;padding:0!important}
+  .rcard:last-child{page-break-after:auto}
+  .rsign{display:flex}
+  .tbl th,.tbl td{color:#000!important;border-bottom:1px solid #999!important}
+  .rtag,.rfill{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  @page{margin:14mm}
+}
