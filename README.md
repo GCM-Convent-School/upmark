@@ -15,15 +15,33 @@ DEV_OTP=1 SEED_DEMO=1 ADMIN_MOBILE=9000000000 MOCK_FRAPPE_ADDR=:8099 ./rapid-ent
 ```
 
 Tests (need Node + Playwright for the `ui-*` suites): `tests/run-all.sh` — each suite gets a fresh DB and mock Frappe.
+Demo parents: any Grade 8-A admission number with the last 4 digits of `father_mobile` or `mother_mobile` from My classes.
 
 ## Spaces
 
-The app is branded **GCM UPMARK** and has two separate spaces behind the same OTP login (sidebar on the left, topics as nav items):
+The app is branded **GCM UPMARK** ("Bold School" look, light and dark, phone first). It installs to a phone's home
+screen from Chrome and keeps working offline. Three spaces:
 
-* **Teacher space** (lime accent): Dashboard, New / Open Test (class → section → category → test → date → subject), All Tests, My Drafts.
-* **Admin space** (violet accent): Dashboard, Marks Explorer (class / section / teacher / status filters), Corrections, Classes & Sections, Teacher Allocation (class → section → teacher per subject), Teachers, Frappe Sync.
+* **Teacher space** (WorkCode sign-in): Today, New test (one screen: class, test, date, subject, out of), My tests,
+  Updates, Weekly reports, My classes. Marking is in a card view with a keypad, or a table with **quick type**
+  (`17 14.5 ab 19` fills a row of students in one go). Teachers lock a sheet and send it to the admin; they never
+  send anything to parents. Teachers are notified when a sheet is approved, sent back, remarked on, when a
+  correction is decided, and when their classes' weekly reports go out.
+* **Admin space**: Pulse, Approvals (one inbox for locked sheets and teachers' correction requests, with checks
+  before approving: spread, zeros not marked absent, high absence, identical marks, drops against the previous test),
+  Marks explorer, Weekly analysis, Student reports, Corrections log, Classes, Students, Teacher allocation,
+  Teachers, Frappe sync.
+* **Parent portal** (`/#/parent`): sign in with the admission number and the last 4 digits of the father's or the
+  mother's mobile number. Shows the weekly report built from approved marks (Monday to Sunday): average, class-section
+  percentile, subject bars against the class average, the term trend of weekly percentiles, and an "I've seen this"
+  button. English, Hindi and Punjabi, picked from the phone's language and switchable. Weekly reports are published
+  automatically each week; there is no WhatsApp or SMS sending of results.
 
-Routing is by role on both the client and the API (`/api/admin/*` returns 403 for teachers).
+Offline: the shell is cached by a service worker, open sheets are kept on the phone, and unsaved marks sync when the
+connection returns. Locking a sheet needs a connection.
+
+Routing is by role on both the client and the API (`/api/admin/*` returns 403 for teachers, parent sessions reach only
+`/api/parent/*`).
 
 ## Configuration (environment)
 
@@ -36,7 +54,7 @@ Routing is by role on both the client and the API (`/api/admin/*` returns 403 fo
 | `FRAPPE_STATUS_FIELD` (`custom_marks_status`) | custom Data field on **Assessment Result** that stores `AB` / `EX` |
 | `FRAPPE_ADMISSION_FIELD` (`admission_number`) | field on **Student** holding the admission number (falls back to Student ID) |
 | `SMTP_HOST` (`host:port`), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email OTP delivery |
-| `OTP_WEBHOOK_URL` | POSTs `{to, message, code}` for SMS/WhatsApp gateways of your choice |
+| `OTP_WEBHOOK_URL` | POSTs `{to, message, code}` to the staff sign-in code gateway of your choice |
 | `COOKIE_SECURE=1` | set behind HTTPS |
 
 ## Architecture

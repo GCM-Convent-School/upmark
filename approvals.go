@@ -24,13 +24,26 @@ func (a *App) adminApprovals(w http.ResponseWriter, r *http.Request, u *User) er
 		if n := graded - absent; n > 0 && e.MaxTotal > 0 {
 			avg = float64(int(sum/float64(n)/e.MaxTotal*1000+0.5)) / 10
 		}
-		out = append(out, map[string]any{"exam": e, "graded": graded, "absent": absent, "avg_pct": avg, "approved": e.ApprovedAt != ""})
+		row := map[string]any{"exam": e, "graded": graded, "absent": absent, "avg_pct": avg, "approved": e.ApprovedAt != ""}
+		if e.ApprovedAt == "" {
+			if rv, err := a.reviewExam(&e); err == nil {
+				n := 0
+				for _, f := range rv["flags"].([]examFlag) {
+					if f.Level == "warn" {
+						n++
+					}
+				}
+				row["warnings"] = n
+			}
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, 200, map[string]any{"exams": out})
 	return nil
 }
 
-// adminApprove approves a submitted test: it is queued for push to Frappe and the teacher can then message parents.
+// adminApprove approves a submitted test: it is queued for push to Frappe, counts in the parents' weekly report,
+// and the teacher is told.
 func (a *App) adminApprove(w http.ResponseWriter, r *http.Request, u *User) error {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	e, err := a.loadExam(id)
@@ -55,6 +68,9 @@ func (a *App) adminApprove(w http.ResponseWriter, r *http.Request, u *User) erro
 		return err
 	}
 	if err := enqueue(tx, "exam", id, 0, "", 0, true); err != nil {
+		return err
+	}
+	if err := notify(tx, e.OwnerID, "approved", "Approved: "+e.Label, "The marks now count in the parents' weekly report.", id); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

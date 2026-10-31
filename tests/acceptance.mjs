@@ -82,7 +82,8 @@ r = await A('POST', '/exams/' + split + '/finalize', {}); ok(r.status === 200 &&
 r = await put(roster[0].id, [1, 1]); ok(r.status === 409, 'Locked test rejects further saves');
 ok((await A('DELETE', '/exams/' + split)).status === 409, 'Locked test cannot be deleted');
 
-console.log('ERP sync (draft -> locked)');
+console.log('ERP sync (locked -> approved -> pushed)');
+ok((await admin('POST', '/admin/exams/' + split + '/approve', {})).status === 200, 'Admin approves the locked sheet (marks reach Frappe only after approval)');
 let synced = false;
 for (let i = 0; i < 40 && !synced; i++) { await sleep(500); const s = (await A('GET', '/exams/' + split)).data.sync; synced = s.state === 'green'; }
 ok(synced, 'Sync health turns green after worker pushes to Frappe');
@@ -151,6 +152,57 @@ ok(red, '🔴 badge while Frappe is down');
 await mock('/__up', {});
 let back = false; for (let i = 0; i < 80 && !back; i++) { await sleep(1000); back = (await A('GET', '/exams/' + d2)).data.sync.state === 'yellow'; }
 ok(back, '🟡 badge returns once the retry succeeds after Frappe is back');
+
+console.log('Approval inbox, notifications, parent weekly report');
+r = await B('POST', '/exams', { ...G8, category: 'Summative', sub_type: 'SA2', date: today, subjects: ['Hindi'], max_total: 20 });
+ok(r.status === 201, 'Create SA2 Hindi for this week'); const wk = r.data.exam_id;
+let wex = (await B('GET', '/exams/' + wk)).data;
+const score = (i) => (i === 0 ? null : i % 21);
+await B('PUT', '/exams/' + wk + '/marks', { entries: wex.roster.map((s, i) => ({ student_id: s.id, subject: 'Hindi', status: i === 0 ? 'AB' : '', comps: i === 0 ? [] : [score(i)] })) });
+ok((await B('POST', '/exams/' + wk + '/finalize', {})).status === 200, 'Teacher locks the sheet');
+let rv = (await admin('GET', '/admin/exams/' + wk + '/review')).data;
+ok(rv.bins.length === 5 && rv.bins.reduce((a, b) => a + b.n, 0) === rv.graded, 'Review gives a 5-bin spread covering every graded student');
+ok(rv.flags.some((f) => /scored 0/.test(f.text)), 'Review warns about a 0 that is not marked absent: ' + rv.flags.map((f) => f.text).join(' | '));
+ok((await admin('GET', '/admin/approvals?state=pending')).data.exams.some((x) => x.exam.id === wk && x.warnings >= 1), 'Approval list carries the warning count');
+ok((await admin('POST', '/admin/exams/' + wk + '/return', { note: '' })).status === 400, 'Sending back needs a note');
+ok((await admin('POST', '/admin/exams/' + wk + '/return', { note: 'Roll 21 shows 0, please check' })).status === 200, 'Admin sends the sheet back with a note');
+ok((await B('GET', '/exams/' + wk)).data.exam.status === 'draft', 'Sheet is editable again for the teacher');
+let notes = (await B('GET', '/notifications')).data;
+ok(notes.notifications.some((n) => n.kind === 'returned' && /Roll 21/.test(n.body)) && notes.unread >= 1, 'Teacher is told why it came back');
+ok((await B('POST', '/exams/' + wk + '/finalize', {})).status === 200, 'Teacher locks it again');
+ok((await admin('POST', '/admin/exams/' + wk + '/remark', { note: 'Thanks, looks right now' })).status === 200, 'Admin leaves a remark');
+ok((await admin('POST', '/admin/exams/' + wk + '/approve', {})).status === 200, 'Admin approves');
+notes = (await B('GET', '/notifications')).data;
+ok(['approved', 'remark'].every((k) => notes.notifications.some((n) => n.kind === k && n.exam_id === wk)), 'Teacher gets approval and remark notifications');
+ok((await B('POST', '/notifications/read', {})).status === 200 && (await B('GET', '/notifications')).data.unread === 0, 'Notifications can be marked read');
+ok((await B('POST', '/exams/' + wk + '/notify-parents', {})).status === 403, 'Teachers cannot message parents');
+
+const ros = (await B('GET', '/roster?class_name=Grade%208&section=A')).data.students;
+const pLogin = async (adm, last4) => {
+  const res = await fetch(BASE + '/api/parent/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'rea' }, body: JSON.stringify({ admission_no: adm, last4 }) });
+  const c = res.headers.get('set-cookie');
+  return { status: res.status, call: async (m, p, b) => { const x = await fetch(BASE + '/api' + p, { method: m, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'rea', cookie: c ? c.split(';')[0] : '' }, body: b ? JSON.stringify(b) : undefined }); return { status: x.status, data: await x.json().catch(() => ({})) }; } };
+};
+const idx = wex.roster.findIndex((s) => score(wex.roster.indexOf(s)) === 20);
+const top = ros.find((s) => s.id === wex.roster[idx].id);
+ok(!!top.father_mobile && !!top.mother_mobile, 'Demo students carry both parent mobiles');
+ok((await pLogin(top.admission_no, '0000')).status === 401, 'Parent sign-in rejects a wrong mobile');
+let pf = await pLogin(top.admission_no.toLowerCase(), top.father_mobile.slice(-4));
+ok(pf.status === 200, "Parent signs in with admission no. + father's last 4 digits");
+ok((await pLogin(top.admission_no, top.mother_mobile.slice(-4))).status === 200, "Mother's last 4 digits work too");
+let rep = (await pf.call('GET', '/parent/report')).data;
+ok(rep.student && rep.student.name === top.name && rep.tests.some((t) => t.subject === 'Hindi' && t.score === 20), 'Report shows this week\'s Hindi 20/20');
+ok(rep.percentile >= 90 && rep.class_size > 1, 'Top scorer sits at the ' + rep.percentile + 'th class percentile (class of ' + rep.class_size + ')');
+ok(rep.weeks.length >= 1 && rep.weeks.some((w) => w.week === rep.week && w.percentile === rep.percentile), 'Term trend includes this week');
+ok((await pf.call('POST', '/parent/seen', { week: rep.week })).status === 200 && !!(await pf.call('GET', '/parent/report')).data.seen_at, '"I have seen this" is recorded');
+ok((await fetch(BASE + '/api/parent/report')).status === 401, 'Report needs a parent sign-in');
+ok((await pf.call('GET', '/me')).status === 401, 'A parent session cannot reach staff APIs');
+
+const low = wex.roster[2];
+r = await B('POST', '/exams/' + wk + '/corrections', { student_id: low.id, subject: 'Hindi', status: '', comps: [score(2) + 1], reason: 'Missed a question while totalling' });
+ok(r.status === 201 && r.data.state === 'pending', 'Teacher requests a correction on an approved sheet');
+r = await admin('POST', '/admin/corrections/' + r.data.correction_id + '/approve', { note: 'Checked' });
+ok(r.status === 200 && (await B('GET', '/notifications')).data.notifications.some((n) => n.kind === 'correction_approved'), 'Teacher is told the correction was approved');
 
 console.log('Performance (20 concurrent teachers saving to SQLite)');
 const test = (await A('GET', '/exams/' + punjabi)).data;

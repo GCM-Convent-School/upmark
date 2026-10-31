@@ -100,6 +100,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/exams/{id}/parents-status", a.wrap("", a.apiParentsStatus))
 	mux.HandleFunc("GET /api/exams/{id}/timeline", a.wrap("", a.apiTimeline))
 	mux.HandleFunc("POST /api/exams/{id}/corrections", a.wrap("", a.apiCorrectionRequest))
+	mux.HandleFunc("GET /api/notifications", a.wrap("", a.apiNotifications))
+	mux.HandleFunc("POST /api/notifications/read", a.wrap("", a.apiNotificationsRead))
+	a.parentRoutes(mux)
 	a.adminRoutes(mux)
 }
 
@@ -975,10 +978,9 @@ func (a *App) apiTimeline(w http.ResponseWriter, r *http.Request, u *User) error
 
 // ---------- corrections ----------
 
+// apiCorrectionRequest changes one student's score on a submitted test. An administrator's edit applies at once;
+// a teacher's becomes a request that waits in the administrator's approval inbox.
 func (a *App) apiCorrectionRequest(w http.ResponseWriter, r *http.Request, u *User) error {
-	if !u.IsAdmin() {
-		return forbidden("This marksheet is locked. Only an administrator can edit it.")
-	}
 	e, set, err := a.examForUser(r, u)
 	if err != nil {
 		return err
@@ -1034,6 +1036,24 @@ func (a *App) apiCorrectionRequest(w http.ResponseWriter, r *http.Request, u *Us
 	tx.QueryRow(`SELECT COUNT(*) FROM corrections WHERE exam_id=? AND student_id=? AND subject=? AND state='pending'`, e.ID, in.StudentID, in.Subject).Scan(&dup)
 	if dup > 0 {
 		return conflict("A correction request for this student is already awaiting approval.", nil)
+	}
+	if !u.IsAdmin() {
+		res, err := tx.Exec(`INSERT INTO corrections(exam_id,student_id,subject,old_status,old_comps,old_total,new_status,new_comps,new_total,reason,state,requested_by,requested_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?)`, e.ID, in.StudentID, in.Subject, oldStatus, oldComps, nullF(oldTotal), in.Status, string(newJSON), *total, in.Reason, u.ID, nowStr())
+		if err != nil {
+			return err
+		}
+		cid, _ := res.LastInsertId()
+		if err := addTimeline(tx, e.ID, u.Name, "correction_requested", map[string]any{
+			"correction_id": cid, "student": stName, "roll_no": roll, "subject": in.Subject,
+			"old": displayResult(oldStatus, oldTotal.Float64), "new": displayResult(in.Status, *total), "reason": in.Reason}); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		writeJSON(w, 201, map[string]any{"ok": true, "correction_id": cid, "state": "pending"})
+		return nil
 	}
 	// Administrator edits apply immediately; the correction row is kept as the audit record and pushed to Frappe.
 	res, err := tx.Exec(`INSERT INTO corrections(exam_id,student_id,subject,old_status,old_comps,old_total,new_status,new_comps,new_total,reason,state,requested_by,requested_at,decided_by,decided_at,decision_note)

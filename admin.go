@@ -23,6 +23,8 @@ func (a *App) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/dummy", a.wrap("admin", a.adminDummyTeachers))
 	mux.HandleFunc("GET /api/admin/approvals", a.wrap("admin", a.adminApprovals))
 	mux.HandleFunc("POST /api/admin/exams/{id}/approve", a.wrap("admin", a.adminApprove))
+	mux.HandleFunc("GET /api/admin/exams/{id}/review", a.wrap("admin", a.adminExamReview))
+	mux.HandleFunc("POST /api/admin/exams/{id}/{action}", a.wrap("admin", a.adminExamNote))
 	mux.HandleFunc("GET /api/admin/analysis", a.wrap("admin", a.adminAnalysis))
 	mux.HandleFunc("POST /api/admin/students/import", a.wrap("admin", a.adminStudentsImport))
 	mux.HandleFunc("GET /api/admin/students", a.wrap("admin", a.adminStudents))
@@ -66,12 +68,15 @@ func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, u *User) err
 		{"pending_approvals", `SELECT COUNT(*) FROM exams WHERE status='locked' AND approved_at=''`},
 		{"pending_corrections", `SELECT COUNT(*) FROM corrections WHERE state='pending'`},
 		{"pending_jobs", `SELECT COUNT(*) FROM jobs WHERE state IN('pending','running')`},
+		{"overdue", `SELECT COUNT(*) FROM exams WHERE status='draft' AND created_at<datetime('now','-3 days')`},
+		{"approved_week", `SELECT COUNT(*) FROM exams WHERE approved_at<>'' AND approved_at>=datetime('now','-7 days')`},
 	} {
 		var n int
 		a.db.QueryRow(q.sql).Scan(&n)
 		counts[q.k] = n
 	}
 	out["counts"] = counts
+	out["parents"] = a.parentReadStats()
 	out["last_master_sync"] = a.setting("last_master_sync")
 	out["last_master_result"] = a.setting("last_master_result")
 	writeJSON(w, 200, out)
@@ -368,7 +373,9 @@ func (a *App) adminCorrectionDecide(w http.ResponseWriter, r *http.Request, u *U
 		return conflict("This request was already decided", nil)
 	}
 	var stName, roll string
+	var requester int64
 	tx.QueryRow(`SELECT name, roll_no FROM students WHERE id=?`, studentID).Scan(&stName, &roll)
+	tx.QueryRow(`SELECT requested_by FROM corrections WHERE id=?`, id).Scan(&requester)
 	detail := map[string]any{"correction_id": id, "student": stName, "roll_no": roll, "subject": subject,
 		"old": displayResult(oldStatus, oldTotal.Float64), "new": displayResult(newStatus, newTotal.Float64), "note": in.Note}
 	if action == "approve" {
@@ -387,6 +394,16 @@ func (a *App) adminCorrectionDecide(w http.ResponseWriter, r *http.Request, u *U
 	}
 	if err := addTimeline(tx, examID, u.Name, "correction_"+st, detail); err != nil {
 		return err
+	}
+	if requester != u.ID {
+		body := "Roll " + roll + " " + stName + ": " + detail["old"].(string) + " → " + detail["new"].(string)
+		if in.Note != "" {
+			body += ". " + in.Note
+		}
+		title := map[string]string{"approved": "Correction approved", "rejected": "Correction not approved"}[st]
+		if err := notify(tx, requester, "correction_"+st, title, body, examID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err

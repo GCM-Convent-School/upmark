@@ -80,20 +80,17 @@ func fmtDate(d string) string {
 }
 
 // apiNotifyParents sends each student's result of an approved test to the student's parents (father/mother numbers).
+// Administrators only: teachers have no say in what reaches parents. Parents normally read the weekly report instead.
 func (a *App) apiNotifyParents(w http.ResponseWriter, r *http.Request, u *User) error {
-	e, set, err := a.examForUser(r, u)
+	if !u.IsAdmin() {
+		return forbidden("Only an administrator can message parents")
+	}
+	e, _, err := a.examForUser(r, u)
 	if err != nil {
 		return err
 	}
 	if e.Status != "locked" || e.ApprovedAt == "" {
 		return conflict("This test has not been approved by an administrator yet.", nil)
-	}
-	if !u.IsAdmin() {
-		for _, s := range e.Subjects {
-			if !can(set, s) {
-				return forbidden("Only a teacher assigned to every subject of this test, or an administrator, can message parents")
-			}
-		}
 	}
 	if a.cfg.NotifyURL == "" || a.cfg.NotifyKey == "" {
 		return &apiErr{Code: 503, Msg: "The WhatsApp gateway is not configured on this server"}

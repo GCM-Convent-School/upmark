@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS parent_msgs(
   exam_id INTEGER NOT NULL, student_id INTEGER NOT NULL, mobile TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
   error TEXT NOT NULL DEFAULT '', sent_at TEXT NOT NULL DEFAULT '', PRIMARY KEY(exam_id, student_id, mobile));
+
+CREATE TABLE IF NOT EXISTS notifications(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '', exam_id INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, read_at TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, id);
+CREATE TABLE IF NOT EXISTS parent_sessions(
+  token_hash TEXT PRIMARY KEY, student_id INTEGER NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS weekly_reports(
+  class_name TEXT NOT NULL, section TEXT NOT NULL DEFAULT '', week TEXT NOT NULL, published_at TEXT NOT NULL,
+  PRIMARY KEY(class_name, section, week));
+CREATE TABLE IF NOT EXISTS report_seen(
+  student_id INTEGER NOT NULL, week TEXT NOT NULL, seen_at TEXT NOT NULL, PRIMARY KEY(student_id, week));
 `
 
 func openDB(path string) (*sql.DB, error) {

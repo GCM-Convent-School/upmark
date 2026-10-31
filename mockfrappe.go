@@ -30,7 +30,8 @@ func newMock() *mockFrappe {
 	for _, g := range demoGroups {
 		var kids []any
 		for _, s := range demoRoster(g.Code, g.N) {
-			m.put("Student", frappeDoc{"name": s.ID, "student_name": s.Name, "admission_number": s.Admission})
+			m.put("Student", frappeDoc{"name": s.ID, "student_name": s.Name, "admission_number": s.Admission,
+				"custom_father_mobile_number": s.FatherMobile, "custom_mother_mobile_number": s.MotherMobile})
 			kids = append(kids, map[string]any{"student": s.ID, "student_name": s.Name, "group_roll_number": s.Roll, "active": 1})
 		}
 		m.put("Student Group", frappeDoc{"name": g.Name, "student_group_name": g.Name, "disabled": 0, "students": kids})
