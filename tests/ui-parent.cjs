@@ -62,9 +62,11 @@ const today = new Date().toISOString().slice(0, 10);
   ok(!!seen, 'The read is stored for this week (Pulse counts it once the week is published)');
 
   console.log('Languages');
-  await p.click('.lang button:has-text("हिं")'); await p.waitForSelector('text=मैंने देख लिया >> nth=0').catch(() => {});
+  const waitTile = (re) => p.waitForFunction((src) => new RegExp(src).test((document.querySelector('.tile.t-olive') || {}).innerText || ''), re.source, { timeout: 5000 }).catch(() => {});
+  await p.click('.lang button:has-text("हिं")'); await waitTile(/कक्षा/);
   ok(/कक्षा परसेंटाइल/.test(await p.locator('.tile.t-olive').innerText()), 'Hindi switch translates the report');
   await p.click('.lang button:has-text("ਪੰ")');
+  await waitTile(/ਜਮਾਤ/);
   ok(/ਜਮਾਤ ਪਰਸੈਂਟਾਈਲ/.test(await p.locator('.tile.t-olive').innerText()), 'Punjabi switch translates the report');
   await shot(p, 'p3-punjabi');
   await p.reload(); await p.waitForSelector('.pp-hero .big');

@@ -225,14 +225,25 @@ async function render() {
 }
 
 // ---------- sign in (staff WorkCode, or parent admission number) ----------
+// loginHero is the poster beside every sign-in form: the school, a still of the product (a marking card, a parent
+// report, an approval) and what the app promises. Decorative only, so it is hidden from screen readers.
 function loginHero() {
-  return h('div', { class: 'lg-hero' },
-    shape('flower', 230, 'var(--pink)', 'left:-40px;top:40px'),
-    shape('burst', 180, 'var(--butter)', 'right:-30px;top:20px'),
-    h('div', { class: 'shape', style: 'left:46%;top:200px;width:260px;height:120px;border-radius:60px;background:var(--olive)' }),
-    (() => { const s = shape('bolt', 120, 'var(--lav)', 'left:52%;top:150px'); s.firstChild.setAttribute('stroke', 'var(--ink)'); s.firstChild.setAttribute('stroke-width', '2.5'); s.firstChild.setAttribute('stroke-linejoin', 'round'); return s; })(),
-    shape('squig', 200, 'var(--ink)', 'left:10px;top:310px'),
-    h('div', { class: 'mark' }, h('span', {}, 'U'), 'UPMARK'));
+  return h('div', { class: 'lg-hero' }, h('div', { class: 'lg-poster' },
+    shape('burst', 320, 'var(--butter)', 'right:-90px;top:-80px', 'shape lg-s1'),
+    shape('flower', 240, 'var(--pink)', 'left:-90px;bottom:70px', 'shape lg-s2'),
+    shape('squig', 190, '#F4EEE3', 'right:6%;bottom:150px;opacity:.3', 'shape lg-s3'),
+    h('div', { class: 'lg-top' },
+      h('div', { class: 'mark' }, h('span', {}, 'U'), h('div', {}, h('b', {}, 'GCM UPMARK'), h('small', {}, 'GCM Convent School'))),
+      h('span', { class: 'lg-chip' }, h('i'), 'Works offline')),
+    h('div', { class: 'lg-stage', 'aria-hidden': 'true' },
+      h('div', { class: 'lg-card c-mark' }, h('div', { class: 'eyebrow' }, 'Roll 14 · 8-A · Hindi'), h('div', { class: 'nm' }, 'Aanya Gill'),
+        h('div', { class: 'big' }, '18', h('small', {}, '/20')), h('div', { class: 'keys' }, ['7', '8', '9', '.5'].map((k) => h('span', {}, k)))),
+      h('div', { class: 'lg-card c-rep' }, h('div', { class: 'eyebrow' }, 'Class percentile'), h('div', { class: 'big' }, '82'),
+        h('div', { class: 'bars' }, [34, 72, 52, 96].map((v) => h('i', { style: 'height:' + v + '%' })))),
+      h('div', { class: 'lg-card c-note' }, h('span', { class: 'ni' }, icon('bell')), h('div', {}, h('b', {}, 'Weekly report ready'), h('small', {}, 'Grade 8-A · for 35 families'))),
+      h('div', { class: 'lg-card c-ok' }, icon('check'), 'Approved'),
+      h('div', { class: 'lg-card c-prog' }, h('b', {}, '35/35'), ' marked')),
+    h('div', { class: 'lg-facts' }, [['clock', 'Marks keep saving without signal'], ['msg', 'हिंदी · ਪੰਜਾਬੀ · English'], ['chart', 'Parents get a weekly report']].map(([ic, t]) => h('div', {}, icon(ic), t)))));
 }
 function viewLogin(step = 'id', ident = '', devCode = '') {
   document.body.className = 'sp-teacher';
@@ -243,15 +254,16 @@ function viewLogin(step = 'id', ident = '', devCode = '') {
   let form;
   if (step === 'id') {
     const input = h('input', { class: 'lg-input', value: ident, placeholder: 'Mobile number or email', inputmode: 'text', autocomplete: 'username', maxLength: 80, autofocus: true, 'aria-label': 'Mobile number or email' });
-    const btn = h('button', { class: 'lg-btn', type: 'submit' }, 'Get my WorkCode');
+    const btn = h('button', { class: 'lg-btn', type: 'submit' }, 'Get my WorkCode', icon('arrow'));
     const submit = async (e) => {
       e && e.preventDefault(); setErr('');
       if (!input.value.trim()) return setErr('Enter your registered mobile number or email.');
       btn.disabled = true; btn.textContent = 'Sending…';
       try { const r = await api('POST', '/auth/request', { identifier: input.value }); viewLogin('code', input.value.trim(), r.dev_code || ''); }
-      catch (x) { setErr(x.message); btn.disabled = false; btn.textContent = 'Get my WorkCode'; }
+      catch (x) { setErr(x.message); btn.disabled = false; fill(btn, 'Get my WorkCode', icon('arrow')); }
     };
     form = h('form', { class: 'lg-form', onsubmit: submit }, tabs,
+      h('div', { class: 'eyebrow lg-hi' }, greet() + ' · Staff sign-in'),
       h('h1', { class: 'disp' }, 'Marks in.', h('br'), 'Worry out.'), h('p', { class: 'lg-sub' }, "GCM Convent School's marks app. Sign in with the mobile number the school has on file."),
       h('label', { class: 'lg-label' }, 'Mobile number or email'), input, err, btn,
       h('p', { class: 'lg-help' }, 'Your 6-digit WorkCode arrives in a few seconds.'));
@@ -293,7 +305,7 @@ function viewLogin(step = 'id', ident = '', devCode = '') {
       h('div', { class: 'lg-row' }, h('button', { class: 'lg-link', type: 'button', onclick: () => viewLogin('id', ident) }, 'Change number'), resend));
     setTimeout(() => { tick(); boxes[0].focus(); }, 0);
   }
-  mount(h('div', { class: 'lgn' }, loginHero(), h('div', { class: 'lg-panel' }, form, h('div', { class: 'lg-foot' }, 'GCM Convent School · UpMark'))));
+  mount(h('div', { class: 'lgn' }, loginHero(), h('div', { class: 'lg-panel' }, form, h('div', { class: 'lg-foot' }, 'Trouble signing in? Ask the exam coordinator.'))));
 }
 
 // ---------- teacher: Today ----------
@@ -337,6 +349,19 @@ async function pgDashboard() {
     : h('button', { class: 'tile t-lav mini', onclick: () => go('tests') }, shape('bolt', 90, '#F4EEE3', 'right:-12px;bottom:-14px;opacity:.6'),
       h('div', { class: 'eyebrow', style: 'position:relative' }, 'Approved'), h('div', { style: 'position:relative' }, h('div', { class: 'ttl' }, approved.length ? approved.length + ' recent' : 'None yet'), h('div', { class: 'small', style: 'font-weight:700;margin-top:4px' }, 'See all tests')));
   const notes = S.notes.notifications.slice(0, 5);
+  // this week, Monday to Sunday: one block per test dated that day (open = butter, with admin = lavender, approved = olive)
+  const now = new Date(), mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const days = [...Array(7)].map((_, i) => {
+    const dt = new Date(mon); dt.setDate(mon.getDate() + i);
+    const s = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+    return { s, lbl: dt.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2), tests: d.recent.filter((e) => e.date === s) };
+  });
+  const tone = (e) => (e.status === 'draft' ? 'var(--butter)' : e.approved_at ? 'var(--olive)' : 'var(--lav)');
+  const weekN = days.reduce((a, x) => a + x.tests.length, 0);
+  const weekCard = h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h3', { style: 'margin:0' }, 'This week'), h('span', { class: 'small mute', style: 'font-weight:700' }, weekN ? weekN + ' test' + (weekN > 1 ? 's' : '') : 'No tests yet')),
+    h('div', { class: 'wk', style: 'margin-top:14px' }, days.map((x) => h('div', { class: 'wd' + (x.s === todayStr() ? ' now' : x.s > todayStr() ? ' future' : ''), title: x.tests.map((e) => e.label).join('\n') },
+      h('div', { class: 'bar' }, x.tests.slice(0, 4).map((e) => h('i', { style: 'background:' + tone(e) }))), h('small', {}, x.lbl)))),
+    h('div', { class: 'wk-foot' }, [['var(--butter)', 'Open'], ['var(--lav)', 'With admin'], ['var(--olive)', 'Approved']].map(([c, l]) => h('span', {}, h('i', { style: 'background:' + c }), l))));
   shellMount({
     title: left ? left + (left === 1 ? ' sheet' : ' sheets') + ' open' : 'All caught up', sub: dateSub() + ' · ' + greet() + ', ' + S.me.name.split(' ')[0],
     cta: h('button', { class: 'cta', disabled: atLimit, title: atLimit ? 'Lock or discard a sheet first' : '', onclick: () => go('new') }, icon('plus'), h('span', { class: 'lbl' }, 'New test')),
@@ -349,7 +374,7 @@ async function pgDashboard() {
             d.recent.length === 0 ? h('div', { class: 'empty' }, 'Nothing yet. Your first test takes about a minute to set up.') : d.recent.slice(0, 6).map((e) => examItem(e, [
               e.status === 'draft' && e.owner_id === S.me.id && h('button', { class: 'btn sm ghost', onclick: () => discardDraft(e) }, 'Discard'),
               h('button', { class: 'btn sm' + (e.status === 'draft' ? '' : ' ghost'), onclick: () => openExam(e.id) }, e.status === 'draft' ? 'Open' : 'View')])))),
-        h('div', {}, h('div', { class: 'row sp', style: 'margin:2px 0 10px' }, h('h3', { style: 'font-weight:800' }, 'Updates'), S.notes.unread ? h('span', { class: 'badge red' }, S.notes.unread + ' new') : null),
+        h('div', {}, weekCard, h('div', { class: 'row sp', style: 'margin:18px 2px 10px' }, h('h3', { class: 'sec-h' }, 'Updates'), S.notes.unread ? h('span', { class: 'badge red' }, S.notes.unread + ' new') : null),
           notes.length ? notes.map(noteItem) : h('div', { class: 'empty' }, 'Approvals, remarks from the admin and weekly report notices show up here.'),
           S.notes.notifications.length > 5 && h('button', { class: 'btn ghost sm', onclick: () => go('updates') }, 'All updates'))),
     ],
@@ -422,25 +447,36 @@ async function pgNewTest() {
     sumText.textContent = parts.join(' · ');
     startBtn.disabled = !ready();
   };
-  const sec = (n, title, ...kids) => h('section', { class: 'step' }, h('label', { class: 'f' }, n + ' · ' + title), kids);
+  const sec = (n, title, done, ...kids) => h('section', { class: 'step' + (done ? ' done' : '') }, h('div', { class: 'num' }, done ? icon('check') : String(n)), h('div', { class: 'grow' }, h('label', { class: 'f' }, title), kids));
+  const outOf = () => (C.split ? C.comps.reduce((a, c) => a + (c.max || 0), 0) : C.total);
+  // preview: what the marking card will say, filling in as the teacher picks
+  const preview = () => {
+    const g = C.group, ph = (v, txt) => (v ? h('span', {}, v) : h('span', { class: 'ghost-txt' }, txt));
+    return h('aside', { class: 'tile t-butter nt-pv', 'aria-label': 'Preview' }, shape('burst', 200, '#F4EEE3', 'right:-60px;top:-60px;opacity:.6'),
+      h('div', { class: 'eyebrow' }, 'Your sheet'),
+      h('div', { class: 'pv-cls' }, ph(g && g.label, 'Class'), ' · ', ph(C.sub_type, 'Test')),
+      h('div', { class: 'ttl' }, ph(C.subjects.join(' + '), 'Subject')),
+      h('div', { class: 'small', style: 'font-weight:700;margin-top:6px' }, (C.date === todayStr() ? 'Today' : fmtDate(C.date)) + (g ? ' · ' + g.students + ' students' : '')),
+      h('div', { class: 'pv-score' }, h('small', {}, 'Out of'), num(outOf())));
+  };
   const draw = () => {
     const g = C.group;
     const withTopic = ['Weekly Test', 'Surprise Test'].includes(C.sub_type);
     const dt = h('input', { type: 'date', value: C.date, max: todayStr(), style: 'max-width:200px', 'aria-label': 'Test date', onchange: (e) => { C.date = e.target.value; draw(); } });
     const typeChip = (t, cat) => h('button', { class: 'pill' + (C.sub_type === t ? ' on' : ''), onclick: () => { C.sub_type = t; C.category = cat; draw(); } }, t);
-    fill(body,
-      sec(1, 'Class', scope.groups.length === 0 ? h('div', { class: 'banner' }, 'No classes are assigned to you yet. Ask the administrator.') :
+    fill(body, h('div', {},
+      sec(1, 'Class', !!g, scope.groups.length === 0 ? h('div', { class: 'banner' }, 'No classes are assigned to you yet. Ask the administrator.') :
         h('div', { class: 'pills' }, scope.groups.map((x) => h('button', { class: 'pill' + (g === x ? ' on' : ''), onclick: () => { C.group = x; C.subjects = []; draw(); } }, x.label, h('span', { class: 'small', style: 'margin-left:8px;opacity:.7' }, x.students))))),
-      sec(2, 'Test', h('div', { class: 'pills' }, scope.formative.map((t) => typeChip(t, 'Formative'))), h('div', { class: 'pills', style: 'margin-top:0' }, scope.summative.map((t) => typeChip(t, 'Summative')))),
-      sec(3, 'Date', h('div', { class: 'pills' },
+      sec(2, 'Test', !!C.sub_type, h('div', { class: 'pills' }, scope.formative.map((t) => typeChip(t, 'Formative'))), h('div', { class: 'pills', style: 'margin-top:0' }, scope.summative.map((t) => typeChip(t, 'Summative')))),
+      sec(3, 'Date', !!C.date, h('div', { class: 'pills' },
         h('button', { class: 'pill' + (C.date === todayStr() ? ' on' : ''), onclick: () => { C.date = todayStr(); draw(); } }, 'Today'),
         h('button', { class: 'pill' + (C.date === todayStr(-1) ? ' on' : ''), onclick: () => { C.date = todayStr(-1); draw(); } }, 'Yesterday'), dt),
         withTopic && h('input', { placeholder: 'Topic or chapter (optional)', maxLength: 120, value: C.topic, oninput: (e) => (C.topic = e.target.value) })),
-      sec(4, 'Subject', !g ? h('div', { class: 'mute small' }, 'Pick a class first.') : [
+      sec(4, 'Subject', C.subjects.length >= (C.combined ? 2 : 1), !g ? h('div', { class: 'mute small' }, 'Pick a class first.') : [
         h('div', { class: 'pills' }, g.subjects.map((s) => h('button', { class: 'pill' + (C.subjects.includes(s) ? ' on' : ''), onclick: () => { if (C.combined) C.subjects = C.subjects.includes(s) ? C.subjects.filter((x) => x !== s) : [...C.subjects, s]; else C.subjects = [s]; draw(); } }, s)),
           g.subjects.length > 1 && h('button', { class: 'pill' + (C.combined ? ' on' : ''), style: 'border-style:dashed', onclick: () => { C.combined = !C.combined; if (!C.combined) C.subjects = C.subjects.slice(0, 1); draw(); } }, C.combined ? 'Combined test: on' : 'Combine subjects')),
         C.combined && h('div', { class: 'small mute' }, 'Pick two or more subjects for one combined test.')]),
-      sec(5, 'Out of', h('div', { class: 'pills' },
+      sec(5, 'Out of', C.split ? C.comps.every((c) => c.name.trim() && c.max > 0) : C.total > 0, h('div', { class: 'pills' },
         !C.split && [10, 20, 25, 50, 80, 100].map((m) => h('button', { class: 'pill' + (!C.custom && C.total === m ? ' on' : ''), onclick: () => { C.total = m; C.custom = false; draw(); } }, m)),
         !C.split && h('button', { class: 'pill' + (C.custom ? ' on' : ''), onclick: () => { C.custom = true; draw(); } }, 'Other'),
         h('button', { class: 'pill' + (C.split ? ' on' : ''), style: 'border-style:dashed', onclick: () => { C.split = !C.split; draw(); } }, C.split ? 'Split into parts: on' : 'Split into parts')),
@@ -450,7 +486,7 @@ async function pgNewTest() {
           h('input', { value: num(c.max), placeholder: 'Max', inputmode: 'decimal', style: 'flex:1', oninput: (e) => { c.max = parseFloat(e.target.value) || 0; summary(); } }),
           C.comps.length > 2 && h('button', { class: 'btn sm ghost', 'aria-label': 'Remove part', onclick: () => { C.comps.splice(i, 1); draw(); } }, '✕'))),
           h('button', { class: 'btn sm ghost', disabled: C.comps.length >= 8, onclick: () => { C.comps.push({ name: '', max: 5 }); draw(); } }, 'Add part'))),
-      h('div', { class: 'sum' }, sumText, startBtn));
+      h('div', { class: 'sum' }, sumText, startBtn)), preview());
     summary();
   };
   startBtn.onclick = async () => {
