@@ -307,7 +307,7 @@ func (a *App) loadExam(id int64) (*Exam, error) {
 	if e.Combined {
 		subj = "Combined: " + subj
 	}
-	e.Label = fmt.Sprintf("%s • %s • %s • %s", groupLabel(e.ClassName, e.Section), e.SubType, subj, shortDate(e.Date))
+	e.Label = fmt.Sprintf("%s · %s · %s · %s", groupLabel(e.ClassName, e.Section), e.SubType, subj, shortDate(e.Date))
 	return e, nil
 }
 

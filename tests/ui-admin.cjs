@@ -66,7 +66,7 @@ const today = new Date().toISOString().slice(0, 10);
   ok((await call(t, 'GET', '/notifications')).data.notifications.some((n) => n.kind === 'correction_approved'), 'Teacher is told');
 
   console.log('Every admin page renders');
-  for (const [route, sel] of [['a/marks', 'table.tbl'], ['a/analysis', '.stats'], ['a/reports', '.rcard'], ['a/corrections', 'table.tbl'], ['a/classes', 'table.tbl'], ['a/students', 'table.tbl'], ['a/allocations', '.pills'], ['a/teachers', 'text=Add a teacher'], ['a/sync', 'text=Master roster']]) {
+  for (const [route, sel] of [['a/marks', 'table.tbl'], ['a/analysis', '.stats'], ['a/reports', '.rcard, .empty .ei'], ['a/corrections', 'table.tbl'], ['a/classes', 'table.tbl'], ['a/students', 'table.tbl'], ['a/allocations', '.pills'], ['a/teachers', 'text=Add a teacher'], ['a/sync', 'text=Master roster']]) {
     await a.goto(BASE + '/#/' + route); await a.waitForSelector(sel, { timeout: 8000 }).then(() => ok(true, route), () => ok(false, route + ' did not render ' + sel));
   }
   await a.click('button.nav[data-route="a/allocations"]'); await a.click('.pill:text-is("Grade 10")'); await a.click('.pill:text-is("A")');

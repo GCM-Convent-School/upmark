@@ -83,7 +83,7 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
 
   console.log('Lock & send to admin');
   await page.click('#lockbtn'); await page.click('.ov button:has-text("Lock & send")');
-  await page.waitForSelector('.banner.info:has-text("With admin")');
+  await page.waitForSelector('.banner.wait:has-text("With admin")');
   ok(true, 'Locked sheet shows "With admin"');
   const examId = +(await page.evaluate(() => location.hash.split('/').pop()));
 

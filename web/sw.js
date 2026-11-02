@@ -1,7 +1,7 @@
 /* UpMark service worker: keeps the app shell available offline so teachers can keep marking without a
    connection. Marks themselves are held on the device by app.js and synced when the network returns. */
-const CACHE = 'upmark-shell-v1';
-const SHELL = ['/', '/app.js', '/style.css', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'upmark-shell-v2';
+const SHELL = ['/', '/app.js', '/style.css', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
