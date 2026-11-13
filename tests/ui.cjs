@@ -42,9 +42,12 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
   ok(subs.includes('Hindi') && subs.includes('Punjabi') && !subs.includes('English'), 'Only assigned subjects offered: ' + subs.join(', '));
   await page.click('.nt .pill:text-is("Hindi")'); await page.click('.nt .pill:text-is("20")');
   ok((await page.locator('.sum').innerText()).includes('FA2 · Hindi · Today · /20'), 'Summary bar reads the whole setup');
+  await page.fill('#topic', 'Ch. 3 Poems');
+  ok((await page.locator('.sum').innerText()).includes('Hindi · Ch. 3 Poems · Today'), 'Optional chapter shows in the summary');
   await shot(page, 't3-new');
   await page.click('#start'); await page.waitForSelector('#prog');
   ok((await page.locator('#prog').innerText()) === '0 / 35', 'Workspace opens at 0 / 35');
+  ok((await page.locator('.ctx .st2').innerText()).includes('Ch. 3 Poems'), 'The chapter is saved with any test type and shows on the sheet');
   ok(await page.locator('.seg button.on').getAttribute('aria-label') === 'Card view', 'Card view is the phone default');
   ok(await page.locator('text=Send to parents').count() === 0, 'Teachers have no Send to parents button');
 

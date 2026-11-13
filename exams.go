@@ -483,10 +483,8 @@ func (a *App) apiExamOpen(w http.ResponseWriter, r *http.Request, u *User, creat
 	if d.After(time.Now().Add(24 * time.Hour)) {
 		return bad("Tests cannot be dated in the future")
 	}
-	in.Topic = strings.TrimSpace(in.Topic)
-	if in.SubType != "Weekly Test" && in.SubType != "Surprise Test" {
-		in.Topic = ""
-	}
+	// any test can carry the chapter or topic it covered; it is optional
+	in.Topic = strings.Join(strings.Fields(in.Topic), " ")
 	if len(in.Topic) > 120 {
 		return bad("Topic is too long")
 	}

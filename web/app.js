@@ -76,7 +76,7 @@ const SYNC = { green: 'Synced to ERP', yellow: 'Not synced yet', red: 'Sync retr
 const syncDot = (s) => h('i', { class: 'sdot ' + s.state, title: SYNC[s.state] + (s.last_error ? ': ' + s.last_error : ''), 'aria-label': SYNC[s.state] });
 const stBadge = (e, sync) => h('span', { class: 'badge ' + STATUS[statusKey(e)][1] }, sync && syncDot(sync), STATUS[statusKey(e)][0]);
 // testName leads with the subject; class, test and date sit underneath in grey.
-const testMeta = (e) => [label(e.class_name, e.section), e.sub_type, e.date && fmtDate(e.date)].filter(Boolean).join(' · ');
+const testMeta = (e) => [label(e.class_name, e.section), e.sub_type, e.topic, e.date && fmtDate(e.date)].filter(Boolean).join(' · ');
 const testName = (e, extra) => (e.subjects ? h('div', { class: 'tn' }, h('b', {}, subjOf(e)), h('div', { class: 'small mute' }, testMeta(e) + (extra ? ' · ' + extra : ''))) : h('b', {}, e.label));
 // emptyState: an icon that says what is missing, one line, and the next step when there is one.
 const emptyState = (ic, text, action) => h('div', { class: 'empty' }, h('span', { class: 'ei' }, icon(ic)), h('div', {}, text), action && h('div', { style: 'margin-top:12px' }, action));
@@ -477,11 +477,12 @@ async function pgNewTest() {
   const sumText = h('div', { class: 'grow' });
   const ready = () => C.group && C.sub_type && C.date && C.subjects.length >= (C.combined ? 2 : 1) && (C.split ? C.comps.every((c) => c.name.trim() && c.max > 0) : C.total > 0);
   const summary = () => {
-    const parts = [C.group && C.group.label, C.sub_type, C.subjects.join(' + '), C.date && (C.date === todayStr() ? 'Today' : fmtDate(C.date)), C.split ? '/' + C.comps.reduce((a, c) => a + (c.max || 0), 0) : '/' + C.total].filter(Boolean);
+    const parts = [C.group && C.group.label, C.sub_type, C.subjects.join(' + '), C.topic.trim(), C.date && (C.date === todayStr() ? 'Today' : fmtDate(C.date)), C.split ? '/' + C.comps.reduce((a, c) => a + (c.max || 0), 0) : '/' + C.total].filter(Boolean);
     sumText.textContent = parts.join(' · ');
     startBtn.disabled = !ready();
   };
   const sec = (n, title, done, ...kids) => h('section', { class: 'step' + (done ? ' done' : '') }, h('div', { class: 'num' }, done ? icon('check') : String(n)), h('div', { class: 'grow' }, h('label', { class: 'f' }, title), kids));
+  const pvTopic = h('div', { class: 'pv-topic' });
   const outOf = () => (C.split ? C.comps.reduce((a, c) => a + (c.max || 0), 0) : C.total);
   // preview: what the marking card will say, filling in as the teacher picks
   const preview = () => {
@@ -489,13 +490,12 @@ async function pgNewTest() {
     return h('aside', { class: 'tile t-butter nt-pv', 'aria-label': 'Preview' }, shape('flower', 170, TINT, 'right:-50px;top:-50px'),
       h('div', { class: 'eyebrow' }, 'Your sheet'),
       h('div', { class: 'pv-cls' }, ph(g && g.label, 'Class'), ' · ', ph(C.sub_type, 'Test')),
-      h('div', { class: 'ttl' }, ph(C.subjects.join(' + '), 'Subject')),
+      h('div', { class: 'ttl' }, ph(C.subjects.join(' + '), 'Subject')), (fill(pvTopic, C.topic.trim()), pvTopic),
       h('div', { class: 'small', style: 'font-weight:700;margin-top:6px' }, (C.date === todayStr() ? 'Today' : fmtDate(C.date)) + (g ? ' · ' + g.students + ' students' : '')),
       h('div', { class: 'pv-score' }, h('small', {}, 'Out of'), num(outOf())));
   };
   const draw = () => {
     const g = C.group;
-    const withTopic = ['Weekly Test', 'Surprise Test'].includes(C.sub_type);
     const dt = h('input', { type: 'date', value: C.date, max: todayStr(), style: 'max-width:200px', 'aria-label': 'Test date', onchange: (e) => { C.date = e.target.value; draw(); } });
     const typeChip = (t, cat) => h('button', { class: 'pill' + (C.sub_type === t ? ' on' : ''), onclick: () => { C.sub_type = t; C.category = cat; draw(); } }, t);
     fill(body, h('div', {},
@@ -504,8 +504,7 @@ async function pgNewTest() {
       sec(2, 'Test', !!C.sub_type, h('div', { class: 'pills' }, scope.formative.map((t) => typeChip(t, 'Formative'))), h('div', { class: 'pills', style: 'margin-top:0' }, scope.summative.map((t) => typeChip(t, 'Summative')))),
       sec(3, 'Date', !!C.date, h('div', { class: 'pills' },
         h('button', { class: 'pill' + (C.date === todayStr() ? ' on' : ''), onclick: () => { C.date = todayStr(); draw(); } }, 'Today'),
-        h('button', { class: 'pill' + (C.date === todayStr(-1) ? ' on' : ''), onclick: () => { C.date = todayStr(-1); draw(); } }, 'Yesterday'), dt),
-        withTopic && h('input', { placeholder: 'Topic or chapter (optional)', maxLength: 120, value: C.topic, oninput: (e) => (C.topic = e.target.value) })),
+        h('button', { class: 'pill' + (C.date === todayStr(-1) ? ' on' : ''), onclick: () => { C.date = todayStr(-1); draw(); } }, 'Yesterday'), dt)),
       sec(4, 'Subject', C.subjects.length >= (C.combined ? 2 : 1), !g ? h('div', { class: 'mute small' }, 'Pick a class first.') : [
         h('div', { class: 'pills' }, g.subjects.map((s) => h('button', { class: 'pill' + (C.subjects.includes(s) ? ' on' : ''), onclick: () => { if (C.combined) C.subjects = C.subjects.includes(s) ? C.subjects.filter((x) => x !== s) : [...C.subjects, s]; else C.subjects = [s]; draw(); } }, s)),
           g.subjects.length > 1 && h('button', { class: 'pill' + (C.combined ? ' on' : ''), style: 'border-style:dashed', onclick: () => { C.combined = !C.combined; if (!C.combined) C.subjects = C.subjects.slice(0, 1); draw(); } }, C.combined ? 'Combined test: on' : 'Combine subjects')),
@@ -520,6 +519,9 @@ async function pgNewTest() {
           h('input', { value: num(c.max), placeholder: 'Max', inputmode: 'decimal', style: 'flex:1', oninput: (e) => { c.max = parseFloat(e.target.value) || 0; summary(); } }),
           C.comps.length > 2 && h('button', { class: 'btn sm ghost', 'aria-label': 'Remove part', onclick: () => { C.comps.splice(i, 1); draw(); } }, '✕'))),
           h('button', { class: 'btn sm ghost', disabled: C.comps.length >= 8, onclick: () => { C.comps.push({ name: '', max: 5 }); draw(); } }, 'Add part'))),
+      // optional: which chapter or topic the test covered, shown on the sheet, in reports and to parents
+      sec(6, 'Chapter or topic (optional)', !!C.topic.trim(), h('input', { id: 'topic', placeholder: 'e.g. Ch. 4 Fractions, or Poem: The Brook', maxLength: 120, value: C.topic, 'aria-label': 'Chapter or topic', style: 'margin:8px 0 6px',
+        oninput: (e) => { C.topic = e.target.value; summary(); fill(pvTopic, C.topic.trim()); const st = e.target.closest('.step'), on = !!C.topic.trim(); if (st.classList.contains('done') !== on) { st.classList.toggle('done', on); fill(st.querySelector('.num'), on ? icon('check') : '6'); } } })),
       h('div', { class: 'sum' }, sumText, startBtn)), preview());
     summary();
   };

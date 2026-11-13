@@ -410,3 +410,4 @@ table.t{border-spacing:0;background:var(--card);border:1px solid color-mix(in sr
 @media (prefers-reduced-motion:reduce){.yay,.yay-burst{animation:none}}
 /* phones: no backdrop blur on scrolling bars */
 @media (max-width:899px){.top,.ctx{backdrop-filter:none;background-color:var(--bg)}}
+.nt-pv .pv-topic{font-weight:var(--w-bold);font-size:.95rem;line-height:1.3;margin-top:4px}.nt-pv .pv-topic:empty{display:none}
