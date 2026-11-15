@@ -34,7 +34,7 @@ ok(ta.sis_state === 'linked' && ta.sis_instructor === 'INS-0001', 'Teacher A is 
 ok((await user('Teacher B (Demo)')).sis_state === 'none', 'Teacher B, with no Instructor, shows as not in the SIS');
 
 const emp = (await sis('POST', res('Employee'), { first_name: 'Teacher C (SIS)', cell_number: '090000 00055', personal_email: 'Teacher.C@School.test', status: 'Active', company: 'GCM Convent School', gender: 'Female', date_of_birth: '1992-02-02', date_of_joining: '2021-04-01' })).data.name;
-const insC = (await sis('POST', res('Instructor'), { instructor_name: 'Teacher C (SIS)', employee: emp, status: 'Active', instructor_log: [{ student_group: 'Grade 8-A', course: 'English', academic_year: '2026-27' }, { student_group: 'Old Group 2024', course: 'English', academic_year: '2024-25' }] })).data.name;
+const insC = (await sis('POST', res('Instructor'), { instructor_name: 'Teacher C (SIS)', employee: emp, status: 'Active', instructor_log: [{ student_group: 'Grade 8-A', course: 'English', academic_year: '2026-27', program: 'Grade 8' }, { student_group: 'Old Group 2024', course: 'English', academic_year: '2024-25', program: 'Grade 8' }] })).data.name;
 r = await sync();
 ok(r.teachers_added === 1, 'A new Instructor in the SIS is added as a teacher');
 let tc = await user('Teacher C (SIS)');
@@ -63,6 +63,7 @@ await admin('PUT', '/admin/users/' + idD + '/allocations', { allocations: [{ cla
 ok(await until(async () => { const i = (await dump('Instructor')).find((x) => x.name === insD.name); return (i.instructor_log || []).length === 2; }), 'Their classes are written to the Instructor log');
 insD = (await dump('Instructor')).find((x) => x.name === insD.name);
 ok(insD.instructor_log.every((l) => l.academic_year === '2026-27' && l.course === 'Science') && insD.instructor_log.some((l) => l.student_group === 'Grade 10-A'), 'with the current academic year and the SIS student group');
+ok(insD.instructor_log.every((l) => l.program === l.student_group.replace(/-A$/, '')), 'and the Program of that student group (the SIS requires it)');
 ok((await admin('GET', '/admin/users/' + idD + '/allocations')).data.allocations.every((a) => a.source === 'frappe'), 'Those allocations are now SIS ones');
 await sync();
 ok((await user('Teacher D (UpMark)')).allocations === 2, 'The next roster sync keeps them');

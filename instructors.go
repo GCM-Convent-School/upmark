@@ -261,6 +261,23 @@ func (a *App) syncInstructor(uid int64) error {
 		rows.Close()
 	}
 
+	// the SIS requires each Instructor Log row's Program: the one its Student Group belongs to
+	programs := map[string]string{}
+	logRow := func(p pair) frappeDoc {
+		prog, ok := programs[p.group]
+		if !ok {
+			if g, err := f.Get("Student Group", p.group); err == nil {
+				prog = str(g, "program")
+			}
+			programs[p.group] = prog
+		}
+		row := frappeDoc{"student_group": p.group, "course": p.course, "academic_year": year}
+		if prog != "" {
+			row["program"] = prog
+		}
+		return row
+	}
+
 	var cur frappeDoc
 	if link != "" {
 		cur, err = f.Get("Instructor", link)
@@ -292,7 +309,7 @@ func (a *App) syncInstructor(uid int64) error {
 		if link == "" {
 			logs := []any{}
 			for p := range want {
-				logs = append(logs, frappeDoc{"student_group": p.group, "course": p.course, "academic_year": year})
+				logs = append(logs, logRow(p))
 			}
 			doc := frappeDoc{"instructor_name": name, "status": "Active", "instructor_log": logs}
 			if emp != "" {
@@ -332,7 +349,7 @@ func (a *App) syncInstructor(uid int64) error {
 	}
 	for p := range want {
 		if !have[p] {
-			logs = append(logs, frappeDoc{"student_group": p.group, "course": p.course, "academic_year": year})
+			logs = append(logs, logRow(p))
 		}
 	}
 	status := "Active"

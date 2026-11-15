@@ -37,7 +37,9 @@ func newMock() *mockFrappe {
 				"custom_father_mobile_number": s.FatherMobile, "custom_mother_mobile_number": s.MotherMobile})
 			kids = append(kids, map[string]any{"student": s.ID, "student_name": s.Name, "group_roll_number": s.Roll, "active": 1})
 		}
-		m.put("Student Group", frappeDoc{"name": g.Name, "student_group_name": g.Name, "disabled": 0, "students": kids})
+		prog, _ := splitGroup(g.Name)
+		m.put("Program", frappeDoc{"name": prog})
+		m.put("Student Group", frappeDoc{"name": g.Name, "student_group_name": g.Name, "program": prog, "disabled": 0, "students": kids})
 	}
 	// merits and demerits, as installed by ERP-Next "merits and demerits/setup_conduct_points.py"
 	m.put("Education Settings", frappeDoc{"name": "Education Settings", "current_academic_year": "2026-27"})
@@ -53,10 +55,10 @@ func newMock() *mockFrappe {
 	m.put("Employee", frappeDoc{"name": "EMP-0001", "employee_name": "Teacher A (Demo)", "user_id": "teacher.a@school.test", "cell_number": "+91 90000 00001", "status": "Active",
 		"company": "GCM Convent School", "gender": "Female", "date_of_birth": "1990-05-05", "date_of_joining": "2020-04-01"})
 	m.put("Instructor", frappeDoc{"name": "INS-0001", "instructor_name": "Teacher A (Demo)", "status": "Active", "employee": "EMP-0001", "instructor_log": []any{
-		map[string]any{"student_group": "Grade 8-A", "course": "Hindi", "academic_year": "2026-27"},
-		map[string]any{"student_group": "Grade 8-A", "course": "Punjabi", "academic_year": "2026-27"},
-		map[string]any{"student_group": "Grade 8-A", "course": "Mathematics", "academic_year": "2026-27"},
-		map[string]any{"student_group": "Grade 10-A", "course": "Mathematics", "academic_year": "2026-27"}}})
+		map[string]any{"student_group": "Grade 8-A", "course": "Hindi", "academic_year": "2026-27", "program": "Grade 8"},
+		map[string]any{"student_group": "Grade 8-A", "course": "Punjabi", "academic_year": "2026-27", "program": "Grade 8"},
+		map[string]any{"student_group": "Grade 8-A", "course": "Mathematics", "academic_year": "2026-27", "program": "Grade 8"},
+		map[string]any{"student_group": "Grade 10-A", "course": "Mathematics", "academic_year": "2026-27", "program": "Grade 10"}}})
 	return m
 }
 
@@ -377,6 +379,9 @@ func (m *mockFrappe) validate(dt string, d frappeDoc) string {
 			row, _ := r.(map[string]any)
 			if str(row, "academic_year") == "" {
 				return "Instructor Log: Academic Year is mandatory"
+			}
+			if str(row, "program") == "" { // as the school's SIS
+				return "frappe.exceptions.MandatoryError: [Instructor]: program"
 			}
 		}
 		return ""
