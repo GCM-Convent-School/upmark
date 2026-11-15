@@ -56,6 +56,23 @@ Routing is by role on both the client and the API (`/api/admin/*` returns 403 fo
 | `SMTP_HOST` (`host:port`), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | email OTP delivery |
 | `OTP_WEBHOOK_URL` | POSTs `{to, message, code}` to the staff sign-in code gateway of your choice |
 | `COOKIE_SECURE=1` | set behind HTTPS |
+| `AUTO_RESTORE=0` | turns off restoring a missing database from the newest SIS backup |
+
+## Keeping UpMark's data (deploys, lost volumes)
+
+The SIS keeps students, marks and merits/demerits. UpMark's own database (`DB_PATH`) keeps teachers,
+tests in progress, approvals, corrections, logs and settings, so it must survive deploys:
+
+1. **Persistent volume.** Mount a named volume at `/data` (Coolify: *Persistent Storage → Add Mount → Volume*,
+   destination `/data`). Without it every deploy starts an empty database; UpMark logs a warning and shows a
+   banner on Pulse and Frappe sync when the database is inside the container or on an unnamed volume.
+2. **Hourly backups.** When something changed, a gzipped snapshot goes to `/data/backups` (48 kept) and to the SIS
+   as a private File named `upmark-backup-*.db.gz` (24 kept). *Frappe sync → Back up now / Download a copy* does it on demand.
+   An empty database is never sent to the SIS.
+3. **Automatic restore.** When UpMark starts and there is no database file, it restores the newest SIS backup first.
+4. **Recovering older databases.** Copy old `rapid.db` files (with their `-wal` files) into `/data/recovered/<name>/`.
+   *Frappe sync → Recover older data* lists them and merges one in: teachers, hand-made allocations, tests with
+   marks and history, corrections, report history and merits/demerits not yet in the SIS. Existing records are kept.
 
 ## Architecture
 

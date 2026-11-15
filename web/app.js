@@ -212,6 +212,12 @@ const TABS = {
 async function signOut() { try { await api('POST', '/auth/logout', {}); } catch (_) {} S.me = null; store.set('rea:get:/me', null); history.replaceState(null, '', location.pathname); viewLogin(); }
 
 // shell: ink rail (desktop) / floating tab bar (phone) + sticky header + content. `bare` hides the header.
+// storageBanner warns the admin when the database would be wiped by the next deploy.
+function storageBanner() {
+  const st = S.counts && S.counts.storage;
+  if (!st || st.ok) return null;
+  return h('div', { class: 'banner warn', id: 'storage-warn' }, h('b', {}, 'The next deploy will erase UpMark\'s data. '), st.detail, ' Teachers, tests not yet in the SIS, approvals and logs would be lost.');
+}
 function shellMount(o) {
   const admin = isAdmin();
   document.body.className = admin ? 'sp-admin' : 'sp-teacher';
@@ -1020,6 +1026,7 @@ async function pgAdminDashboard() {
     title: 'Pulse', sub: dateSub() + ' · ' + greet(),
     cta: h('button', { class: 'cta', onclick: () => go('a/approvals') }, icon('inbox'), h('span', { class: 'lbl' }, 'Approvals' + (waiting ? ' (' + waiting + ')' : ''))),
     content: [
+      storageBanner(),
       h('div', { class: 'pulse' },
         h('button', { class: 'tile t-ink lead', style: 'text-align:left', onclick: () => go('a/approvals') }, waiting ? shape('bolt', 120, 'var(--lav)', 'right:-14px;top:-22px') : shape('burst', 130, 'var(--olive)', 'right:-24px;top:-34px'),
           h('div', { class: 'eyebrow', style: 'position:relative;opacity:.7' }, 'Waiting on you'), h('div', { class: 'disp', style: 'position:relative' }, waiting ? waiting + (waiting === 1 ? ' sheet' : ' items') : 'All clear'),
@@ -1352,12 +1359,61 @@ async function pgAdminSync() {
   const d = await api('GET', '/admin/exams?status=');
   const bad = d.exams.filter((r) => r.sync.state === 'red');
   const btn = h('button', { class: 'btn', onclick: (e) => runMasterSync(e.target) }, 'Sync roster now');
+  const recovery = h('div');
   shellMount({ title: 'Frappe sync', sub: 'Roster pull and marks push', content: [
     h('div', { class: 'card' }, h('h3', {}, 'Master roster'), !o.frappe_configured && h('div', { class: 'banner bad' }, 'Frappe is not configured (FRAPPE_URL / FRAPPE_API_KEY / FRAPPE_API_SECRET). Marks are safe here and sync once it is.'),
       h('p', { class: 'mute' }, 'Pulls every 7 days. Last sync: ', h('b', {}, o.last_master_sync ? fmtTs(o.last_master_sync) : 'never'), h('br'), last), btn),
+    dbCard(o), recovery,
     h('div', { class: 'card' }, h('h3', {}, 'What the dots mean'), h('div', { class: 'row', style: 'gap:18px' }, ['green', 'yellow', 'red'].map((k) => h('span', { class: 'small', style: 'font-weight:700' }, syncDot({ state: k }), ' ' + SYNC[k])))),
     h('div', { class: 'card' }, h('h3', {}, 'Needs attention (' + bad.length + ')'), bad.length === 0 ? emptyState('check', 'Everything is syncing normally.') : bad.map((r) => h('div', { class: 'li' }, testName(r.exam, r.sync.last_error || 'queued'), stBadge(r.exam, r.sync)))),
   ] });
+  drawRecovery(recovery);
+}
+// dbCard: where UpMark's own data lives, its backups, and whether a deploy would wipe it.
+function dbCard(o) {
+  const b = o.backup || {};
+  const refresh = async () => { S.counts = await api('GET', '/admin/overview'); render(); };
+  const now = h('button', { class: 'btn', id: 'backup-now', onclick: async (e) => {
+    e.target.disabled = true;
+    try { const r = await api('POST', '/admin/backup'); toast(r.sis ? 'Backed up here and in the SIS' : 'Backed up on the server'); await refresh(); }
+    catch (x) { toast(x.data && x.data.error ? 'Backup saved here, but: ' + x.data.error : x.message, true); e.target.disabled = false; }
+  } }, 'Back up now');
+  const dl = h('button', { class: 'btn ghost', onclick: async () => {
+    const res = await fetch('/api/admin/backup/download', { headers: { 'X-Requested-With': 'rea' }, credentials: 'same-origin' });
+    if (!res.ok) return toast('Download failed', true);
+    const url = URL.createObjectURL(await res.blob()), a = h('a', { href: url, download: 'upmark-backup-' + todayStr() + '.db.gz' });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } }, 'Download a copy');
+  return h('div', { class: 'card', id: 'dbcard' }, h('h3', {}, 'UpMark database'), storageBanner(),
+    b.restored_from && h('div', { class: 'banner info' }, 'Restored automatically from the SIS backup ', h('b', {}, b.restored_from), ' on ', fmtTs(b.restored_at), '.'),
+    b.error && h('div', { class: 'banner bad' }, 'Last backup had a problem: ' + b.error),
+    h('p', { class: 'mute', style: 'margin:0 0 10px;line-height:1.6' },
+      'Started on ', h('b', {}, o.db_created_at ? fmtTs(o.db_created_at) : 'unknown'), '. ', o.storage && o.storage.ok ? o.storage.detail.replace(/\.?$/, '.') : '', h('br'),
+      'Last backup: ', h('b', {}, b.last ? fmtTs(b.last) : 'not yet'), b.local_count ? ' · ' + b.local_count + ' kept on the server' : '',
+      b.sis ? [' · in the SIS: ', h('b', {}, b.last_sis ? fmtTs(b.last_sis) : 'not yet')] : ' · the SIS is not connected', h('br'),
+      'Backed up every hour when something changes. If the database is ever lost, UpMark restores the newest SIS copy on its own when it starts.'),
+    h('div', { class: 'row', style: 'gap:10px' }, now, dl));
+}
+// drawRecovery lists older databases copied into <data>/recovered and merges one on request.
+const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+async function drawRecovery(box) {
+  let d; try { d = await api('GET', '/admin/recovery'); } catch (_) { return; }
+  if (!d.files.length) return;
+  fill(box, h('div', { class: 'card', id: 'recovery' }, h('h3', {}, 'Recover older data'),
+    h('p', { class: 'mute', style: 'margin-top:0' }, 'Earlier UpMark databases found in ', h('code', {}, d.folder), '. Importing adds what is missing here: teachers, tests with their marks and history, corrections and reports. Nothing already here is changed.'),
+    d.files.map((f) => h('div', { class: 'li' },
+      h('div', { class: 'grow' }, h('b', {}, f.file), h('div', { class: 'small mute' }, f.error ? 'Could not open: ' + f.error :
+        pl(f.teachers, 'teacher') + ' · ' + pl(f.tests, 'test') + ' · ' + pl(f.marks, 'mark') + (f.last ? ' · last change ' + fmtTs(f.last) : ''))),
+      f.imported ? h('span', { class: 'small mute' }, 'Imported ' + fmtTs(f.imported)) :
+        !f.error && h('button', { class: 'btn sm', onclick: async (e) => {
+          if (!(await ask('Import ' + f.file + '?', 'Adds ' + pl(f.teachers, 'teacher') + ' and ' + pl(f.tests, 'test') + ' where they are missing. Tests that already exist here are skipped.', 'Import'))) return;
+          e.target.disabled = true;
+          try {
+            const r = await api('POST', '/admin/recovery/import', { file: f.file });
+            toast('Recovered ' + pl(r.Teachers, 'teacher') + ', ' + pl(r.Tests, 'test') + ' (' + pl(r.Marks, 'mark') + ')' + (r.TestsSkipped ? ', ' + r.TestsSkipped + ' already here' : ''));
+            S.counts = await api('GET', '/admin/overview'); render();
+          } catch (x) { toast(x.message, true); e.target.disabled = false; }
+        } }, 'Import')))));
 }
 
 // ---------- merits & demerits (the SIS keeps the record; UpMark gives, shows and syncs) ----------

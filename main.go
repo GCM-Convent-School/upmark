@@ -92,16 +92,11 @@ type App struct {
 	cfg    Config
 	frappe *Frappe
 	kick   chan struct{}
+	store  storageCheck
 }
 
 func main() {
 	cfg := loadConfig()
-	db, err := openDB(cfg.DBPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
 	if cfg.MockFrappe != "" {
 		go runMockFrappe(cfg.MockFrappe)
 		if cfg.FrappeURL == "" {
@@ -109,12 +104,36 @@ func main() {
 			cfg.FrappeKey, cfg.FrappeSecret = "mock", "mock"
 		}
 	}
-	a := &App{db: db, cfg: cfg, frappe: newFrappe(cfg), kick: make(chan struct{}, 1)}
+	frappe := newFrappe(cfg)
+	// a missing database (new or lost volume) comes back from the newest backup kept in the SIS
+	restored, rerr := restoreFromSIS(cfg, frappe)
+	if rerr != nil {
+		log.Printf("restore from SIS: %v", rerr)
+	} else if restored != "" {
+		log.Printf("database restored from SIS backup %s", restored)
+	}
+	db, err := openDB(cfg.DBPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	a := &App{db: db, cfg: cfg, frappe: frappe, kick: make(chan struct{}, 1)}
+	if restored != "" {
+		a.setSetting("restored_from", restored)
+		a.setSetting("restored_at", nowStr())
+	}
 	if err := a.bootstrapAdmin(); err != nil {
 		log.Fatal(err)
 	}
 	if err := a.seedConductCategories(); err != nil {
 		log.Fatal(err)
+	}
+	a.store = checkStorage(cfg.DBPath)
+	if a.setting("db_created_at") == "" {
+		a.setSetting("db_created_at", nowStr())
+	}
+	if !a.store.OK {
+		log.Printf("WARNING: %s", a.store.Detail)
 	}
 	if cfg.SeedDemo {
 		if err := a.seedDemo(); err != nil {
@@ -127,6 +146,7 @@ func main() {
 	go a.syncWorker(ctx)
 	go a.masterScheduler(ctx)
 	go a.weeklyScheduler(ctx)
+	go a.backupScheduler(ctx)
 
 	sub, _ := fs.Sub(webFS, "web")
 	mux := http.NewServeMux()

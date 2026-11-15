@@ -104,6 +104,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/read", a.wrap("", a.apiNotificationsRead))
 	a.parentRoutes(mux)
 	a.conductRoutes(mux)
+	a.backupRoutes(mux)
+	a.recoverRoutes(mux)
 	a.adminRoutes(mux)
 }
 

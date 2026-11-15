@@ -79,6 +79,9 @@ func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, u *User) err
 	out["parents"] = a.parentReadStats()
 	out["last_master_sync"] = a.setting("last_master_sync")
 	out["last_master_result"] = a.setting("last_master_result")
+	out["storage"] = a.store
+	out["backup"] = a.backupStatus()
+	out["db_created_at"] = a.setting("db_created_at")
 	writeJSON(w, 200, out)
 	return nil
 }

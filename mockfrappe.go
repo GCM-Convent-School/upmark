@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -18,11 +20,12 @@ type mockFrappe struct {
 	docs  map[string]map[string]frappeDoc
 	order map[string][]string
 	seq   map[string]int
+	files map[string][]byte // private file contents by file_url
 	down  bool
 }
 
 func newMock() *mockFrappe {
-	m := &mockFrappe{docs: map[string]map[string]frappeDoc{}, order: map[string][]string{}, seq: map[string]int{}}
+	m := &mockFrappe{docs: map[string]map[string]frappeDoc{}, order: map[string][]string{}, seq: map[string]int{}, files: map[string][]byte{}}
 	for _, c := range demoCourses {
 		m.put("Course", frappeDoc{"name": c, "course_name": c})
 	}
@@ -86,6 +89,11 @@ func matches(d frappeDoc, filters [][]any) bool {
 				}
 				return false
 			}
+		case "like":
+			pat := "^" + strings.ReplaceAll(regexp.QuoteMeta(fmt.Sprint(want)), "%", ".*") + "$"
+			if ok, _ := regexp.MatchString(pat, fmt.Sprint(got)); !ok {
+				return false
+			}
 		case "<":
 			gf, _ := got.(float64)
 			wf, _ := want.(float64)
@@ -130,6 +138,42 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.down {
 		jerr(w, 503, "mock frappe is down")
+		return
+	}
+	if p == "/api/method/upload_file" {
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			jerr(w, 400, err.Error())
+			return
+		}
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			jerr(w, 417, "No file attached")
+			return
+		}
+		data, _ := io.ReadAll(f)
+		name := r.FormValue("file_name")
+		if name == "" {
+			name = hdr.Filename
+		}
+		m.seq["File"]++
+		dir := "/files/"
+		if r.FormValue("is_private") == "1" {
+			dir = "/private/files/"
+		}
+		d := frappeDoc{"name": fmt.Sprintf("FILE-%05d", m.seq["File"]), "file_name": name, "file_url": dir + name, "is_private": r.FormValue("is_private"), "file_size": float64(len(data))}
+		m.files[dir+name] = data
+		m.put("File", d)
+		writeJSON(w, 200, map[string]any{"message": d})
+		return
+	}
+	if strings.HasPrefix(p, "/private/files/") || strings.HasPrefix(p, "/files/") {
+		data, ok := m.files[p]
+		if !ok {
+			jerr(w, 404, "file not found")
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(data)
 		return
 	}
 	if p == "/api/method/frappe.client.submit" || p == "/api/method/frappe.client.cancel" {
