@@ -33,12 +33,13 @@ let ta = await user('Teacher A (Demo)');
 ok(ta.sis_state === 'linked' && ta.sis_instructor === 'INS-0001', 'Teacher A is linked to INS-0001 through their Employee email');
 ok((await user('Teacher B (Demo)')).sis_state === 'none', 'Teacher B, with no Instructor, shows as not in the SIS');
 
-const emp = (await sis('POST', res('Employee'), { employee_name: 'Teacher C (SIS)', cell_number: '090000 00055', personal_email: 'Teacher.C@School.test', status: 'Active' })).data.name;
+const emp = (await sis('POST', res('Employee'), { first_name: 'Teacher C (SIS)', cell_number: '090000 00055', personal_email: 'Teacher.C@School.test', status: 'Active', company: 'GCM Convent School', gender: 'Female', date_of_birth: '1992-02-02', date_of_joining: '2021-04-01' })).data.name;
 const insC = (await sis('POST', res('Instructor'), { instructor_name: 'Teacher C (SIS)', employee: emp, status: 'Active', instructor_log: [{ student_group: 'Grade 8-A', course: 'English', academic_year: '2026-27' }, { student_group: 'Old Group 2024', course: 'English', academic_year: '2024-25' }] })).data.name;
 r = await sync();
 ok(r.teachers_added === 1, 'A new Instructor in the SIS is added as a teacher');
 let tc = await user('Teacher C (SIS)');
 ok(tc && tc.mobile === '9000000055' && tc.email === 'teacher.c@school.test' && tc.sis_instructor === insC, 'Their mobile and email come from the Employee (cleaned up)');
+ok(tc.gender === 'Female' && tc.dob === '1992-02-02' && tc.doj === '2021-04-01', 'and so do their gender and dates');
 const C = await login('9000000055');
 const sc = (await C('GET', '/scope')).data.groups;
 ok(sc.length === 1 && sc[0].label === 'Grade 8-A' && sc[0].subjects.join() === 'English', 'They can sign in and see the classes from the Instructor log');
@@ -68,10 +69,30 @@ ok((await user('Teacher D (UpMark)')).allocations === 2, 'The next roster sync k
 await admin('PUT', '/admin/allocations/assign', { class_name: 'Grade 8', section: 'A', subject: 'Science', user_id: idD, assigned: false });
 ok(await until(async () => (await dump('Instructor')).find((x) => x.name === insD.name).instructor_log.length === 1), 'Removing a class here removes it from the SIS');
 
-const empE = (await sis('POST', res('Employee'), { employee_name: 'Teacher E', cell_number: '9000000067', status: 'Active' })).data.name;
+const empE = (await sis('POST', res('Employee'), { first_name: 'Teacher', last_name: 'E', cell_number: '9000000067', status: 'Active', company: 'GCM Convent School', gender: 'Male', date_of_birth: '1988-08-08', date_of_joining: '2019-06-01' })).data.name;
 r = await admin('POST', '/admin/users', { name: 'Teacher E', mobile: '9000000067', role: 'teacher' });
 ok(await until(async () => (await user('Teacher E')).sis_state === 'linked'), 'A teacher with an Employee in the SIS is added too');
 ok((await dump('Instructor')).find((i) => i.instructor_name === 'Teacher E').employee === empE, 'and their Instructor is linked to that Employee (matched by mobile)');
+let eE = (await dump('Employee')).find((e) => e.name === empE);
+ok(eE.department === 'Teaching - GCM', 'That Employee, with no department, is put in Teaching');
+
+console.log('Employees: found and filled in, or made');
+const empM = (await sis('POST', res('Employee'), { first_name: 'Marketing', last_name: 'Teacher', personal_email: 'mt@school.test', status: 'Active', company: 'GCM Convent School', gender: 'Female', date_of_birth: '1991-01-01', date_of_joining: '2018-01-01', department: 'Marketing - GCM' })).data.name;
+r = await admin('POST', '/admin/users', { name: 'Marketing Teacher', mobile: '9000000068', email: 'mt@school.test', role: 'teacher' });
+ok(await until(async () => (await user('Marketing Teacher')).sis_state === 'linked'), 'A teacher whose Employee is in another department is linked by email');
+eE = (await dump('Employee')).find((e) => e.name === empM);
+ok(eE.department === 'Marketing - GCM' && eE.cell_number === '9000000068', 'Their department is kept, and the missing mobile is filled in');
+ok((await dump('Employee')).length === 4, 'No new Employee is made for them');
+
+ok((await admin('POST', '/admin/users', { name: 'Bad Gender', mobile: '9000000069', role: 'teacher', gender: 'X' })).status === 400, 'Gender must be Male, Female or Other');
+ok((await admin('POST', '/admin/users', { name: 'Bad Date', mobile: '9000000069', role: 'teacher', dob: '01/02/1990' })).status === 400, 'Dates must be YYYY-MM-DD');
+r = await admin('POST', '/admin/users', { name: 'Teacher F Kaur', mobile: '9000000070', email: 'f@school.test', role: 'teacher', gender: 'Female', dob: '1995-05-05' });
+ok(await until(async () => (await user('Teacher F Kaur')).sis_state === 'linked'), 'A new teacher with gender and date of birth is added to the SIS');
+const insF = (await dump('Instructor')).find((i) => i.instructor_name === 'Teacher F Kaur');
+const eF = (await dump('Employee')).find((e) => e.name === insF.employee);
+ok(eF && eF.first_name === 'Teacher' && eF.last_name === 'F Kaur' && eF.gender === 'Female' && eF.date_of_birth === '1995-05-05', 'with a new Employee made from their details');
+ok(eF.department === 'Teaching - GCM' && eF.company === 'GCM Convent School' && eF.cell_number === '9000000070' && eF.personal_email === 'f@school.test', 'in the Teaching department, with their mobile and email');
+ok(eF.date_of_joining === new Date().toLocaleDateString('en-CA'), 'Joining date defaults to today');
 
 ta = await user('Teacher D (UpMark)');
 await admin('PUT', '/admin/users/' + idD, { ...ta, active: false });
@@ -81,12 +102,18 @@ ok((await user('Teacher D (UpMark)')).active === false, 'and the next sync keeps
 
 console.log('Teachers who were here before the sync');
 const tb = await user('Teacher B (Demo)');
+ok((await admin('PUT', '/admin/users/' + tb.id, { ...tb, gender: 'Male', dob: '1985-03-03', doj: '2015-07-01' })).status === 200, 'Admin fills in Teacher B\'s gender and dates');
+ok((await user('Teacher B (Demo)')).doj === '2015-07-01', 'They are saved');
 ok((await (await login('9000000001'))('POST', '/admin/users/' + tb.id + '/sis')).status === 403, 'Only admins can add teachers to the SIS');
 r = await admin('POST', '/admin/users/' + tb.id + '/sis');
 ok(r.status === 200 && r.data.queued === 1, 'Add to SIS for one teacher');
 ok(await until(async () => (await user('Teacher B (Demo)')).sis_state === 'linked'), 'Teacher B is now an Instructor');
 const insB = (await dump('Instructor')).find((i) => i.instructor_name === 'Teacher B (Demo)');
 ok(insB.instructor_log.length === 5, 'with all five of their classes');
+const eB = (await dump('Employee')).find((e) => e.name === insB.employee);
+ok(eB && eB.gender === 'Male' && eB.date_of_joining === '2015-07-01' && eB.department === 'Teaching - GCM', 'and an Employee in Teaching with the dates given');
+
+ok(!(await dump('Instructor')).find((i) => i.instructor_name === 'Teacher D (UpMark)').employee, 'Teacher D, without gender or date of birth, still has no Employee');
 r = await admin('POST', '/admin/users/sis-all');
 ok(r.status === 200 && r.data.queued === 0, 'Add all: nobody left to add');
 

@@ -16,6 +16,9 @@ import (
 
 func nowStr() string { return time.Now().UTC().Format(time.RFC3339) }
 
+// today is the local date, as the SIS stores dates.
+func today() string { return time.Now().Format("2006-01-02") }
+
 func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -14,13 +15,17 @@ import (
 //     log gives the classes and subjects. Teachers are linked by users.frappe_instructor; the first time,
 //     by email, then by mobile number.
 //   - push (outbox job "instructor", student_id = user id): adding a teacher, changing their name or
-//     classes, or switching them off in UpMark updates the Instructor (created when missing, linked to the
-//     Employee with the same email or mobile).
+//     classes, or switching them off in UpMark updates the Instructor (created when missing). Each
+//     Instructor is tied to an Employee: the one with the same email or mobile (its missing contact details,
+//     gender, dates and department are filled in), or a new one in the Teaching department when the teacher
+//     has a gender and date of birth (the SIS requires both). Employees cover every department; UpMark
+//     never switches one off.
 // While a push is waiting, the pull leaves that teacher alone so UpMark's newer change wins.
 
 type sisInstructor struct {
 	name, fullName, status, employee string
 	email, mobile                    string
+	gender, dob, doj                 string
 	empLeft                          bool
 	logs                             []map[string]any
 }
@@ -63,6 +68,7 @@ func (a *App) fetchInstructors() ([]sisInstructor, error) {
 			if e, err := f.Get("Employee", in.employee); err == nil {
 				in.email = employeeEmail(e)
 				in.mobile = digits10(str(e, "cell_number"))
+				in.gender, in.dob, in.doj = str(e, "gender"), str(e, "date_of_birth"), str(e, "date_of_joining")
 				st := str(e, "status")
 				in.empLeft = st == "Left" || st == "Inactive" || st == "Suspended"
 				if in.fullName == "" {
@@ -111,8 +117,8 @@ func (a *App) applyInstructors(tx *wtx, list []sisInstructor, groupNames map[str
 				res["skipped"]++ // nobody to sign in as: shown to the admin as "no contact in the SIS"
 				continue
 			}
-			r, err := tx.Exec(`INSERT INTO users(name,mobile,email,role,created_at,frappe_instructor) VALUES(?,?,?,'teacher',?,?)`,
-				in.fullName, nullIfEmpty(in.mobile), nullIfEmpty(in.email), nowStr(), in.name)
+			r, err := tx.Exec(`INSERT INTO users(name,mobile,email,role,created_at,frappe_instructor,gender,dob,doj) VALUES(?,?,?,'teacher',?,?,?,?,?)`,
+				in.fullName, nullIfEmpty(in.mobile), nullIfEmpty(in.email), nowStr(), in.name, in.gender, in.dob, in.doj)
 			if err != nil {
 				res["skipped"]++
 				continue
@@ -145,6 +151,11 @@ func (a *App) applyInstructors(tx *wtx, list []sisInstructor, groupNames map[str
 			}
 			if !oem.Valid && in.email != "" {
 				tx.Exec(`UPDATE users SET email=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM users WHERE email=?)`, in.email, uid, in.email)
+			}
+			for col, v := range map[string]string{"gender": in.gender, "dob": in.dob, "doj": in.doj} {
+				if v != "" {
+					tx.Exec(`UPDATE users SET `+col+`=? WHERE id=? AND `+col+`=''`, v, uid)
+				}
 			}
 			if active == 0 && oactive == 1 {
 				tx.Exec(`DELETE FROM sessions WHERE user_id=?`, uid)
@@ -212,9 +223,11 @@ func (a *App) syncInstructor(uid int64) error {
 	var name, role, link string
 	var mob, em sql.NullString
 	var active int
-	if err := a.db.QueryRow(`SELECT name,mobile,email,role,active,frappe_instructor FROM users WHERE id=?`, uid).Scan(&name, &mob, &em, &role, &active, &link); err != nil {
+	var t teacherProfile
+	if err := a.db.QueryRow(`SELECT name,mobile,email,role,active,frappe_instructor,gender,dob,doj FROM users WHERE id=?`, uid).Scan(&name, &mob, &em, &role, &active, &link, &t.gender, &t.dob, &t.doj); err != nil {
 		return err
 	}
+	t.name, t.mobile, t.email = name, mob.String, em.String
 	if role != "teacher" {
 		return nil
 	}
@@ -262,8 +275,9 @@ func (a *App) syncInstructor(uid int64) error {
 		return nil // never created for someone already switched off
 	}
 	if link == "" {
-		// an Instructor with this teacher's Employee may already exist; link to it instead of making a second one
-		emp, err := a.findEmployee(em.String, mob.String)
+		// the teacher's Employee (found, or made in the Teaching department); an Instructor for it may
+		// already exist, so link to that instead of making a second one
+		emp, err := a.ensureEmployee(t, "")
 		if err != nil {
 			return err
 		}
@@ -325,7 +339,18 @@ func (a *App) syncInstructor(uid int64) error {
 	if active == 0 {
 		status = "Left"
 	}
-	if _, err := f.Update("Instructor", link, frappeDoc{"instructor_name": name, "status": status, "instructor_log": logs}); err != nil {
+	upd := frappeDoc{"instructor_name": name, "status": status, "instructor_log": logs}
+	if active == 1 {
+		// keep the Employee in step (fill what it is missing), or give the Instructor one
+		emp, err := a.ensureEmployee(t, str(cur, "employee"))
+		if err != nil {
+			return err
+		}
+		if emp != "" && str(cur, "employee") == "" {
+			upd["employee"] = emp
+		}
+	}
+	if _, err := f.Update("Instructor", link, upd); err != nil {
 		return err
 	}
 	return a.afterInstructorPush(uid, link)
@@ -344,29 +369,139 @@ func (a *App) afterInstructorPush(uid int64, link string) error {
 	return tx.Commit()
 }
 
-// findEmployee returns the Employee whose email or mobile number matches, or "".
-func (a *App) findEmployee(email, mobile string) (string, error) {
-	if email == "" && mobile == "" {
-		return "", nil
-	}
-	rows, err := a.frappe.List("Employee", []string{"name", "user_id", "company_email", "prefered_email", "personal_email", "cell_number", "status"}, nil)
+type teacherProfile struct {
+	name, mobile, email, gender, dob, doj string
+}
+
+// ensureEmployee returns the teacher's Employee: emp when given, else the one whose email or mobile matches,
+// else a new one in the Teaching department (only when gender and date of birth are known, which the SIS
+// requires). Details the Employee is missing are filled in from UpMark; nothing it has is overwritten.
+func (a *App) ensureEmployee(t teacherProfile, emp string) (string, error) {
+	f := a.frappe
+	rows, err := f.List("Employee", []string{"name", "user_id", "company_email", "prefered_email", "personal_email", "cell_number", "status", "company"}, nil)
 	if err != nil {
 		return "", err
 	}
-	for _, e := range rows {
-		if str(e, "status") == "Left" {
-			continue
-		}
-		if email != "" && (normIdent(str(e, "user_id")) == email || normIdent(str(e, "company_email")) == email || normIdent(str(e, "prefered_email")) == email || normIdent(str(e, "personal_email")) == email) {
-			return str(e, "name"), nil
-		}
-	}
-	for _, e := range rows {
-		if str(e, "status") != "Left" && mobile != "" && digits10(str(e, "cell_number")) == mobile {
-			return str(e, "name"), nil
+	if emp == "" && t.email != "" {
+		for _, e := range rows {
+			if str(e, "status") != "Left" && employeeHasEmail(e, t.email) {
+				emp = str(e, "name")
+				break
+			}
 		}
 	}
-	return "", nil
+	if emp == "" && t.mobile != "" {
+		for _, e := range rows {
+			if str(e, "status") != "Left" && digits10(str(e, "cell_number")) == t.mobile {
+				emp = str(e, "name")
+				break
+			}
+		}
+	}
+	// the school's own email domain: an address there is a company email, any other a personal one
+	emailField := "personal_email"
+	if at := strings.LastIndex(t.email, "@"); at > 0 {
+		dom := t.email[at:]
+		for _, e := range rows {
+			if strings.HasSuffix(normIdent(str(e, "company_email")), dom) {
+				emailField = "company_email"
+				break
+			}
+		}
+	}
+	dept := a.teachingDepartment()
+	if emp == "" {
+		if t.gender == "" || t.dob == "" {
+			return "", nil // the Instructor is made without an Employee until these are filled in
+		}
+		first, last := t.name, ""
+		if i := strings.IndexByte(t.name, ' '); i > 0 {
+			first, last = t.name[:i], strings.TrimSpace(t.name[i+1:])
+		}
+		doj := t.doj
+		if doj == "" {
+			doj = today()
+		}
+		doc := frappeDoc{"first_name": first, "gender": t.gender, "date_of_birth": t.dob, "date_of_joining": doj, "status": "Active"}
+		if last != "" {
+			doc["last_name"] = last
+		}
+		if c := mostCommon(rows, "company"); c != "" {
+			doc["company"] = c
+		}
+		if dept != "" {
+			doc["department"] = dept
+		}
+		if t.mobile != "" {
+			doc["cell_number"] = t.mobile
+		}
+		if t.email != "" {
+			doc[emailField] = t.email
+		}
+		created, err := f.Insert("Employee", doc)
+		if err != nil {
+			return "", err
+		}
+		return str(created, "name"), nil
+	}
+	cur, err := f.Get("Employee", emp)
+	if err != nil {
+		return "", err
+	}
+	patch := frappeDoc{}
+	if dept != "" && str(cur, "department") == "" {
+		patch["department"] = dept
+	}
+	if t.mobile != "" && str(cur, "cell_number") == "" {
+		patch["cell_number"] = t.mobile
+	}
+	if t.email != "" && employeeEmail(cur) == "" {
+		patch[emailField] = t.email
+	}
+	for field, v := range map[string]string{"gender": t.gender, "date_of_birth": t.dob, "date_of_joining": t.doj} {
+		if v != "" && str(cur, field) == "" {
+			patch[field] = v
+		}
+	}
+	if len(patch) > 0 {
+		if _, err := f.Update("Employee", emp, patch); err != nil {
+			return "", err
+		}
+	}
+	return emp, nil
+}
+
+func employeeHasEmail(e frappeDoc, email string) bool {
+	for _, k := range []string{"user_id", "company_email", "prefered_email", "personal_email"} {
+		if normIdent(str(e, k)) == email {
+			return true
+		}
+	}
+	return false
+}
+
+func mostCommon(rows []frappeDoc, field string) string {
+	n, best := map[string]int{}, ""
+	for _, r := range rows {
+		if v := str(r, field); v != "" {
+			if n[v]++; n[v] > n[best] {
+				best = v
+			}
+		}
+	}
+	return best
+}
+
+// teachingDepartment is the SIS Department teachers belong to ("Teaching - <company abbr>"), or "".
+func (a *App) teachingDepartment() string {
+	if d := os.Getenv("SIS_TEACHING_DEPARTMENT"); d != "" {
+		return d
+	}
+	rows, err := a.frappe.List("Department", []string{"name"}, [][]any{{"name", "like", "Teaching%"}})
+	if err != nil || len(rows) == 0 {
+		return ""
+	}
+	return str(rows[0], "name")
 }
 
 // sisState describes a teacher's link to the SIS for the Teachers page.

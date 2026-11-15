@@ -45,7 +45,13 @@ func newMock() *mockFrappe {
 		m.put("Conduct Category", frappeDoc{"name": c.Name, "category_name": c.Name, "point_type": c.Type, "default_points": float64(c.Default), "enabled": float64(1), "description": c.Description})
 	}
 	m.put("User", frappeDoc{"name": "teacher.a@school.test", "email": "teacher.a@school.test"})
-	m.put("Employee", frappeDoc{"name": "EMP-0001", "employee_name": "Teacher A (Demo)", "user_id": "teacher.a@school.test", "cell_number": "+91 90000 00001", "status": "Active"})
+	// Employees cover every department; teachers are the ones with an Instructor
+	m.put("Company", frappeDoc{"name": "GCM Convent School"})
+	for _, d := range []string{"All Departments", "Marketing - GCM", "Teaching - GCM"} {
+		m.put("Department", frappeDoc{"name": d})
+	}
+	m.put("Employee", frappeDoc{"name": "EMP-0001", "employee_name": "Teacher A (Demo)", "user_id": "teacher.a@school.test", "cell_number": "+91 90000 00001", "status": "Active",
+		"company": "GCM Convent School", "gender": "Female", "date_of_birth": "1990-05-05", "date_of_joining": "2020-04-01"})
 	m.put("Instructor", frappeDoc{"name": "INS-0001", "instructor_name": "Teacher A (Demo)", "status": "Active", "employee": "EMP-0001", "instructor_log": []any{
 		map[string]any{"student_group": "Grade 8-A", "course": "Hindi", "academic_year": "2026-27"},
 		map[string]any{"student_group": "Grade 8-A", "course": "Punjabi", "academic_year": "2026-27"},
@@ -304,12 +310,25 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		var in frappeDoc
 		json.NewDecoder(r.Body).Decode(&in)
-		if msg := m.validate(dt, in); msg != "" {
+		check := in
+		if dt == "Employee" { // mandatory fields are checked on the whole record
+			check = frappeDoc{}
+			for k, v := range d {
+				check[k] = v
+			}
+			for k, v := range in {
+				check[k] = v
+			}
+		}
+		if msg := m.validate(dt, check); msg != "" {
 			jerr(w, 417, msg)
 			return
 		}
 		for k, v := range in {
 			d[k] = v
+		}
+		if dt == "Employee" {
+			d["employee_name"] = check["employee_name"]
 		}
 		writeJSON(w, 200, map[string]any{"data": d})
 	case r.Method == "DELETE":
@@ -331,6 +350,21 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *mockFrappe) validate(dt string, d frappeDoc) string {
+	if dt == "Employee" { // as HRMS: these are mandatory, and links must exist
+		for _, f := range []string{"first_name", "gender", "date_of_birth", "date_of_joining", "company"} {
+			if str(d, f) == "" {
+				return "frappe.exceptions.MandatoryError: [Employee]: " + f
+			}
+		}
+		if m.docs["Company"][str(d, "company")] == nil {
+			return "Could not find Company: " + str(d, "company")
+		}
+		if dep := str(d, "department"); dep != "" && m.docs["Department"][dep] == nil {
+			return "Could not find Department: " + dep
+		}
+		d["employee_name"] = strings.TrimSpace(str(d, "first_name") + " " + str(d, "last_name"))
+		return ""
+	}
 	if dt == "Instructor" { // Instructor Log rows need an academic year
 		if e := str(d, "employee"); e != "" && m.docs["Employee"][e] == nil {
 			return "Could not find Employee: " + e

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (a *App) adminRoutes(mux *http.ServeMux) {
@@ -130,7 +131,7 @@ func (a *App) adminExams(w http.ResponseWriter, r *http.Request, u *User) error 
 }
 
 func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, u *User) error {
-	rows, err := a.db.Query(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active,u.frappe_instructor,
+	rows, err := a.db.Query(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active,u.frappe_instructor,u.gender,u.dob,u.doj,
 		(SELECT COUNT(*) FROM allocations WHERE user_id=u.id) FROM users u ORDER BY u.role, u.name`)
 	if err != nil {
 		return err
@@ -139,11 +140,12 @@ func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, u *User) error 
 	out := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, role, link string
+		var name, role, link, gender, dob, doj string
 		var mob, em sql.NullString
 		var active, n int
-		rows.Scan(&id, &name, &mob, &em, &role, &active, &link, &n)
-		out = append(out, map[string]any{"id": id, "name": name, "mobile": mob.String, "email": em.String, "role": role, "active": active == 1, "allocations": n, "sis_instructor": link})
+		rows.Scan(&id, &name, &mob, &em, &role, &active, &link, &gender, &dob, &doj, &n)
+		out = append(out, map[string]any{"id": id, "name": name, "mobile": mob.String, "email": em.String, "role": role, "active": active == 1, "allocations": n, "sis_instructor": link,
+			"gender": gender, "dob": dob, "doj": doj})
 	}
 	rows.Close()
 	for _, x := range out { // after the scan: sisState queries the same database
@@ -161,6 +163,10 @@ type userReq struct {
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	Active *bool  `json:"active"`
+	// optional; the SIS needs gender and date of birth to create an Employee for a new teacher
+	Gender *string `json:"gender"`
+	DOB    *string `json:"dob"`
+	DOJ    *string `json:"doj"`
 }
 
 func (in *userReq) clean() error {
@@ -185,7 +191,35 @@ func (in *userReq) clean() error {
 	if in.Role != "teacher" && in.Role != "admin" {
 		return bad("Role must be teacher or admin")
 	}
+	if in.Gender != nil {
+		g := strings.TrimSpace(*in.Gender)
+		if g != "" && g != "Male" && g != "Female" && g != "Other" {
+			return bad("Gender must be Male, Female or Other")
+		}
+		in.Gender = &g
+	}
+	for _, d := range []**string{&in.DOB, &in.DOJ} {
+		if *d == nil {
+			continue
+		}
+		v := strings.TrimSpace(**d)
+		if v != "" {
+			if _, err := time.Parse("2006-01-02", v); err != nil {
+				return bad("Dates must look like 2026-04-01")
+			}
+		}
+		*d = &v
+	}
 	return nil
+}
+
+// saveProfile stores the optional details that were sent (left out = unchanged).
+func (in *userReq) saveProfile(db execer, id int64) {
+	for col, v := range map[string]*string{"gender": in.Gender, "dob": in.DOB, "doj": in.DOJ} {
+		if v != nil {
+			db.Exec(`UPDATE users SET `+col+`=? WHERE id=?`, *v, id)
+		}
+	}
 }
 
 func (a *App) adminUserCreate(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -205,6 +239,7 @@ func (a *App) adminUserCreate(w http.ResponseWriter, r *http.Request, u *User) e
 		return err
 	}
 	id, _ := res.LastInsertId()
+	in.saveProfile(a.db, id)
 	if in.Role == "teacher" && a.frappe.Enabled() { // a new teacher becomes an SIS Instructor
 		queueInstructor(a.db, id)
 		a.wake()
@@ -237,6 +272,7 @@ func (a *App) adminUserUpdate(w http.ResponseWriter, r *http.Request, u *User) e
 		}
 		return err
 	}
+	in.saveProfile(a.db, id)
 	if active == 0 {
 		a.db.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
 	}

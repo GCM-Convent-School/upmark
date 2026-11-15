@@ -1227,18 +1227,36 @@ async function pgAdminTeachers() {
   const [d, scope] = await Promise.all([api('GET', '/admin/users'), api('GET', '/scope')]);
   const name = h('input', { placeholder: 'Full name' }), mob = h('input', { placeholder: 'Mobile (10 digits)', inputmode: 'numeric' }), em = h('input', { placeholder: 'Email', type: 'email' });
   const role = h('select', {}, h('option', { value: 'teacher' }, 'Teacher'), h('option', { value: 'admin' }, 'Administrator / exam coordinator'));
+  const prof = profileFields({});
   const err = h('div', { class: 'err-msg' });
   shellMount({ title: 'Teachers', sub: 'Add teachers and choose what they can see', content: [
-    h('div', { class: 'card' }, h('h3', {}, 'Add a teacher'), h('div', { class: 'grid2' }, name, mob, em, role), err,
-      h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => { try { await api('POST', '/admin/users', { name: name.value, mobile: mob.value, email: em.value, role: role.value }); toast('User added'); render(); } catch (e) { err.textContent = e.message; } } }, 'Add')),
+    h('div', { class: 'card' }, h('h3', {}, 'Add a teacher'), h('div', { class: 'grid2' }, name, mob, em, role), prof.el, err,
+      h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => { try { await api('POST', '/admin/users', { name: name.value, mobile: mob.value, email: em.value, role: role.value, ...prof.value() }); toast('User added'); render(); } catch (e) { err.textContent = e.message; } } }, 'Add')),
     importCard(), sisTeachersCard(d.users),
     d.users.map((u) => {
       const holder = h('div');
       return h('div', { class: 'card', 'data-uid': u.id }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, u.name), ' ', h('span', { class: 'badge' }, u.role), !u.active && h('span', { class: 'badge s-attn' }, 'inactive'), ' ', sisChip(u), h('div', { class: 'small mute' }, [u.mobile, u.email].filter(Boolean).join(' · ') + ' · ' + u.allocations + ' allocations')),
         h('div', { class: 'row' }, u.role === 'teacher' && u.sis_state === 'none' && u.active && h('button', { class: 'btn sm', onclick: (e) => addToSIS(e.target, '/admin/users/' + u.id + '/sis') }, 'Add to SIS'),
+          u.role === 'teacher' && h('button', { class: 'btn sm ghost', onclick: () => detailsEditor(holder, u) }, 'Details'),
           u.role === 'teacher' && h('button', { class: 'btn sm ghost', onclick: () => allocEditor(holder, u, scope) }, 'Classes & subjects'),
           h('button', { class: 'btn sm ghost', onclick: async () => { try { await api('PUT', '/admin/users/' + u.id, { ...u, active: !u.active }); render(); } catch (e) { toast(e.message, true); } } }, u.active ? 'Deactivate' : 'Activate'))), holder);
     })] });
+}
+// Gender and dates: optional here, but the SIS needs gender and date of birth to make a new Employee.
+function profileFields(u) {
+  const gender = h('select', {}, h('option', { value: '' }, 'Not set'), ['Female', 'Male', 'Other'].map((g) => h('option', { value: g, selected: u.gender === g }, g)));
+  const dob = h('input', { type: 'date', value: u.dob || '' }), doj = h('input', { type: 'date', value: u.doj || '' });
+  const lab = (t, el) => h('label', { class: 'small mute', style: 'display:grid;gap:4px' }, t, el);
+  return {
+    el: h('div', {}, h('div', { class: 'grid2', style: 'margin-top:10px' }, lab('Gender (optional)', gender), lab('Date of birth (optional)', dob), lab('Date of joining (optional)', doj)),
+      h('div', { class: 'small mute', style: 'margin-top:6px' }, 'Needed only if this teacher has no Employee in the SIS yet: with gender and date of birth, one is made for them in the Teaching department.')),
+    value: () => ({ gender: gender.value, dob: dob.value, doj: doj.value }),
+  };
+}
+function detailsEditor(holder, u) {
+  const prof = profileFields(u);
+  holder.replaceChildren(h('div', { class: 'card', style: 'margin-top:10px' }, prof.el,
+    h('button', { class: 'btn sm', style: 'margin-top:10px', onclick: async () => { try { await api('PUT', '/admin/users/' + u.id, { ...u, ...prof.value() }); toast('Details saved'); render(); } catch (e) { toast(e.message, true); } } }, 'Save details')));
 }
 // Teachers are SIS Instructors: the chip says whether this one is linked, on its way, or not there yet.
 function sisChip(u) {
@@ -1257,7 +1275,7 @@ function sisTeachersCard(users) {
   const t = users.filter((u) => u.role === 'teacher' && u.active);
   const none = t.filter((u) => u.sis_state === 'none'), errs = t.filter((u) => u.sis_state === 'error');
   return h('div', { class: 'card', id: 'sis-teachers' }, h('h3', {}, 'Teachers in the SIS'),
-    h('p', { class: 'mute', style: 'margin-top:0;line-height:1.6' }, 'The SIS is the master list. Every active Instructor there is a teacher here, with classes from the Instructor log, and Sync roster brings in changes. Adding a teacher here, changing their classes or deactivating them updates their Instructor in the SIS.'),
+    h('p', { class: 'mute', style: 'margin-top:0;line-height:1.6' }, 'The SIS is the master list. Every active Instructor there is a teacher here, with classes from the Instructor log, and Sync roster brings in changes. Adding a teacher here, changing their classes or deactivating them updates their Instructor in the SIS. Each Instructor is tied to the teacher\'s Employee (found by email or mobile, or made in the Teaching department when gender and date of birth are filled in).'),
     h('p', { style: 'margin:0 0 10px' }, h('b', {}, t.length - none.length - errs.length), ' of ', t.length, ' active teachers are linked', errs.length ? [' · ', h('b', { class: 'pd' }, errs.length), ' retrying'] : ''),
     errs.map((u) => h('div', { class: 'small', style: 'margin-bottom:6px' }, h('b', {}, u.name), ': ', u.sis_error)),
     none.length > 0 && h('div', { class: 'row', style: 'gap:10px' },
