@@ -36,6 +36,12 @@ func newMock() *mockFrappe {
 		}
 		m.put("Student Group", frappeDoc{"name": g.Name, "student_group_name": g.Name, "disabled": 0, "students": kids})
 	}
+	// merits and demerits, as installed by ERP-Next "merits and demerits/setup_conduct_points.py"
+	m.put("Education Settings", frappeDoc{"name": "Education Settings", "current_academic_year": "2026-27"})
+	for _, c := range defaultConductCategories {
+		m.put("Conduct Category", frappeDoc{"name": c.Name, "category_name": c.Name, "point_type": c.Type, "default_points": float64(c.Default), "enabled": float64(1), "description": c.Description})
+	}
+	m.put("User", frappeDoc{"name": "teacher.a@school.test", "email": "teacher.a@school.test"})
 	m.put("Employee", frappeDoc{"name": "EMP-0001", "user_id": "teacher.a@school.test"})
 	m.put("Instructor", frappeDoc{"name": "INS-0001", "employee": "EMP-0001", "instructor_log": []any{
 		map[string]any{"student_group": "Grade 8-A", "course": "Hindi"},
@@ -206,6 +212,15 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			d["name"] = str(d, "assessment_group_name")
 		case "Assessment Criteria":
 			d["name"] = str(d, "assessment_criteria")
+		case "Student Conduct Point":
+			m.seq[dt]++
+			d["name"] = fmt.Sprintf("SCP-2026-%05d", m.seq[dt])
+			if c := m.docs["Conduct Category"][str(d, "category")]; c != nil {
+				d["point_type"] = c["point_type"]
+			}
+			if str(d, "awarded_by") == "" {
+				d["awarded_by"] = "api@school.test"
+			}
 		default:
 			m.seq[dt]++
 			d["name"] = fmt.Sprintf("%s-%04d", strings.ToUpper(strings.ReplaceAll(dt, " ", ""))[:6], m.seq[dt])
@@ -240,12 +255,40 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			d[k] = v
 		}
 		writeJSON(w, 200, map[string]any{"data": d})
+	case r.Method == "DELETE":
+		if m.docs[dt][name] == nil {
+			jerr(w, 404, dt+" "+name+" not found")
+			return
+		}
+		delete(m.docs[dt], name)
+		for i, n := range m.order[dt] {
+			if n == name {
+				m.order[dt] = append(m.order[dt][:i], m.order[dt][i+1:]...)
+				break
+			}
+		}
+		writeJSON(w, 202, map[string]any{"message": "ok"})
 	default:
 		jerr(w, 405, "method not allowed")
 	}
 }
 
 func (m *mockFrappe) validate(dt string, d frappeDoc) string {
+	if dt == "Student Conduct Point" {
+		if m.docs["Student"][str(d, "student")] == nil {
+			return "Could not find Student: " + str(d, "student")
+		}
+		if m.docs["Conduct Category"][str(d, "category")] == nil {
+			return "Could not find Category: " + str(d, "category")
+		}
+		if p, _ := d["points"].(float64); p <= 0 {
+			return "Points must be greater than zero"
+		}
+		if u := str(d, "awarded_by"); u != "" && m.docs["User"][u] == nil {
+			return "Could not find Awarded By: " + u
+		}
+		return ""
+	}
 	if dt != "Assessment Result" {
 		return ""
 	}

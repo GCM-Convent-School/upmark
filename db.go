@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS weekly_reports(
   PRIMARY KEY(class_name, section, week));
 CREATE TABLE IF NOT EXISTS report_seen(
   student_id INTEGER NOT NULL, week TEXT NOT NULL, seen_at TEXT NOT NULL, PRIMARY KEY(student_id, week));
+
+CREATE TABLE IF NOT EXISTS conduct_categories(
+  name TEXT PRIMARY KEY, point_type TEXT NOT NULL CHECK(point_type IN('Merit','Demerit')), default_points INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS conduct_points(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER NOT NULL, frappe_student TEXT NOT NULL, student_group TEXT NOT NULL,
+  academic_year TEXT NOT NULL DEFAULT '', date TEXT NOT NULL, category TEXT NOT NULL, point_type TEXT NOT NULL,
+  points INTEGER NOT NULL CHECK(points > 0), remarks TEXT NOT NULL DEFAULT '', awarded_by INTEGER NOT NULL DEFAULT 0,
+  awarded_by_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, frappe_name TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'pending', deleted_by TEXT NOT NULL DEFAULT '', deleted_at TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_conduct_student ON conduct_points(frappe_student, state);
+CREATE INDEX IF NOT EXISTS idx_conduct_group ON conduct_points(student_group, date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_conduct_frappe ON conduct_points(frappe_name) WHERE frappe_name<>'';
 `
 
 func openDB(path string) (*sql.DB, error) {

@@ -149,6 +149,8 @@ func (a *App) masterScheduler(ctx context.Context) {
 				} else {
 					a.setSetting("details_sync_v1", "1")
 				}
+			} else if _, err := a.pullConduct(); err != nil { // merits and demerits entered in ERPNext, hourly
+				log.Printf("conduct pull: %v", err)
 			}
 		}
 		select {
@@ -168,6 +170,13 @@ func (a *App) masterSync() (map[string]any, error) {
 	if err != nil {
 		a.setSetting("last_master_result", "failed: "+err.Error())
 		return nil, err
+	}
+	if c, err := a.pullConduct(); err != nil {
+		log.Printf("conduct pull: %v", err)
+	} else {
+		for k, v := range c {
+			res[k] = v
+		}
 	}
 	res["duration_ms"] = time.Since(start).Milliseconds()
 	b, _ := json.Marshal(res)
@@ -446,6 +455,8 @@ func (a *App) runDueJobs() bool {
 		runErr = a.syncExam(j.examID)
 	case "correction":
 		runErr = a.syncCorrection(j)
+	case "conduct": // correction_id holds the conduct point id
+		runErr = a.syncConduct(j.corrID)
 	default:
 		runErr = fmt.Errorf("unknown job kind %q", j.kind)
 	}

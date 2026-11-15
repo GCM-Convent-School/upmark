@@ -42,6 +42,8 @@ type studentReport struct {
 	Absent    int              `json:"absent"`
 	Subjects  []*reportSubject `json:"subjects"`
 	Detail    []reportTest     `json:"detail"`
+	Conduct   conductTotals    `json:"conduct"` // merits and demerits this academic year
+	fid       string
 }
 
 func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }
@@ -89,13 +91,13 @@ func (a *App) apiStudentReports(w http.ResponseWriter, r *http.Request, u *User)
 
 	reports := map[int64]*studentReport{}
 	order := []int64{}
-	sr, err := a.db.Query(`SELECT id,name,roll_no,admission_no,father_name,mother_name FROM students WHERE class_name=? AND section=? AND active=1 ORDER BY roll_sort,name`, class, section)
+	sr, err := a.db.Query(`SELECT id,name,roll_no,admission_no,father_name,mother_name,frappe_id FROM students WHERE class_name=? AND section=? AND active=1 ORDER BY roll_sort,name`, class, section)
 	if err != nil {
 		return err
 	}
 	for sr.Next() {
 		x := &studentReport{Subjects: []*reportSubject{}, Detail: []reportTest{}}
-		sr.Scan(&x.ID, &x.Name, &x.Roll, &x.Admission, &x.Father, &x.Mother)
+		sr.Scan(&x.ID, &x.Name, &x.Roll, &x.Admission, &x.Father, &x.Mother, &x.fid)
 		if only != 0 && x.ID != only {
 			continue
 		}
@@ -155,8 +157,19 @@ func (a *App) apiStudentReports(w http.ResponseWriter, r *http.Request, u *User)
 		s.cs += classAvg[key{eid, subject}]
 		s.n++
 	}
+	var fids []string
+	for _, id := range order {
+		fids = append(fids, reports[id].fid)
+	}
+	conduct, err := a.conductTotalsFor(fids)
+	if err != nil {
+		return err
+	}
 	out := []*studentReport{}
 	for _, id := range order {
+		if t := conduct[reports[id].fid]; t != nil {
+			reports[id].Conduct = *t
+		}
 		x := reports[id]
 		if counts[id] > 0 {
 			x.Avg = round1(sums[id] / float64(counts[id]))
@@ -169,7 +182,7 @@ func (a *App) apiStudentReports(w http.ResponseWriter, r *http.Request, u *User)
 		sort.Slice(x.Subjects, func(i, j int) bool { return x.Subjects[i].Subject < x.Subjects[j].Subject })
 		out = append(out, x)
 	}
-	writeJSON(w, 200, map[string]any{"students": out, "from": fromS, "to": toS, "days": days, "class": groupLabel(class, section),
+	writeJSON(w, 200, map[string]any{"students": out, "from": fromS, "to": toS, "days": days, "class": groupLabel(class, section), "academic_year": a.academicYear(),
 		"rules": map[string]any{"below_under": belowAvgBelow, "excellent_from": excellentFrom}})
 	return nil
 }

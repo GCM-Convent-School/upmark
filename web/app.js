@@ -112,6 +112,7 @@ const ICONS = {
   report: 'M6 2h9l5 5v15H6zM14 2v5h5M9 12h8M9 16h8M9 8h3',
   student: 'M2 9l10-5 10 5-10 5zM6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6',
   teacher: 'M10 4h11v11h-7M7 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 21v-1a5 5 0 0 1 10 0v1M14 10l3-3',
+  star: 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.8l6.1-.9z',
 };
 const NS = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs) { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; }
@@ -196,10 +197,10 @@ window.addEventListener('hashchange', () => { if (rawRoute().startsWith('parent'
 const NAV = {
   teacher: () => [
     { sec: 'MARKS', items: [['dashboard', 'Today', 'home'], ['new', 'New test', 'plus'], ['tests', 'My tests', 'list'], ['updates', 'Updates', 'bell', S.notes.unread]] },
-    { sec: 'CLASSES', items: [['reports', 'Weekly reports', 'report'], ['classes', 'My classes', 'users']] },
+    { sec: 'CLASSES', items: [['reports', 'Weekly reports', 'report'], ['classes', 'My classes', 'users'], ['conduct', 'Merits & demerits', 'star']] },
   ],
   admin: () => [
-    { sec: 'WORKSPACE', items: [['a/dashboard', 'Pulse', 'pulse'], ['a/approvals', 'Approvals', 'inbox', S.counts && (S.counts.counts.pending_approvals + S.counts.counts.pending_corrections)], ['a/marks', 'Marks explorer', 'list'], ['a/analysis', 'Weekly analysis', 'chart'], ['a/reports', 'Student reports', 'report'], ['a/corrections', 'Corrections log', 'clock']] },
+    { sec: 'WORKSPACE', items: [['a/dashboard', 'Pulse', 'pulse'], ['a/approvals', 'Approvals', 'inbox', S.counts && (S.counts.counts.pending_approvals + S.counts.counts.pending_corrections)], ['a/marks', 'Marks explorer', 'list'], ['a/analysis', 'Weekly analysis', 'chart'], ['a/reports', 'Student reports', 'report'], ['a/conduct', 'Merits & demerits', 'star'], ['a/corrections', 'Corrections log', 'clock']] },
     { sec: 'SCHOOL', items: [['a/classes', 'Classes', 'school'], ['a/students', 'Students', 'student'], ['a/allocations', 'Teacher allocation', 'layers'], ['a/teachers', 'Teachers', 'teacher']] },
     { sec: 'ERP', items: [['a/sync', 'Frappe sync', 'refresh']] },
   ],
@@ -254,8 +255,8 @@ async function render() {
     const r = rawRoute();
     if (r.startsWith('exam/')) return openExam(+r.slice(5), { noPush: true });
     const pages = isAdmin()
-      ? { 'a/marks': pgAdminMarks, 'a/approvals': pgAdminApprovals, 'a/analysis': pgAdminAnalysis, 'a/reports': pgReports, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/students': pgAdminStudents, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync }
-      : { classes: pgClasses, reports: pgReports, new: pgNewTest, tests: () => pgTests(''), drafts: () => pgTests('draft'), updates: pgUpdates };
+      ? { 'a/marks': pgAdminMarks, 'a/approvals': pgAdminApprovals, 'a/analysis': pgAdminAnalysis, 'a/reports': pgReports, 'a/corrections': pgAdminCorrections, 'a/classes': pgAdminClasses, 'a/students': pgAdminStudents, 'a/allocations': pgAdminAllocations, 'a/teachers': pgAdminTeachers, 'a/sync': pgAdminSync, 'a/conduct': pgConduct }
+      : { classes: pgClasses, reports: pgReports, new: pgNewTest, tests: () => pgTests(''), drafts: () => pgTests('draft'), updates: pgUpdates, conduct: pgConduct };
     const fn = pages[r] || (isAdmin() ? pgAdminDashboard : pgDashboard);
     await fn();
   } catch (e) { if (S.me) shellMount({ title: e.offline ? 'Offline' : 'Something went wrong', content: h('div', { class: 'banner bad' }, e.offline ? 'This page needs a connection. Your Today screen and open marking sheets still work offline.' : e.message) }); }
@@ -436,18 +437,21 @@ async function pgClasses() {
     groups.length === 0 ? h('div', { class: 'card' }, emptyState('school', 'No classes are assigned to you yet. Ask the administrator to assign your classes and subjects.')) : [chips, out]] });
   if (!sel) return;
   const d = await api('GET', '/roster?class_name=' + encodeURIComponent(sel.class_name) + '&section=' + encodeURIComponent(sel.section));
+  const cd = await api('GET', '/conduct?class_name=' + encodeURIComponent(sel.class_name) + '&section=' + encodeURIComponent(sel.section)).catch(() => null);
+  const conduct = new Map(cd ? cd.students.map((s) => [s.id, s]) : []);
+  const pts = (x) => { const c = conduct.get(x.id); return c && c.entries ? h('span', { title: '+' + c.merit + ' merit, −' + c.demerit + ' demerit' }, h('b', { class: c.net < 0 ? 'pd' : 'pm' }, signed(c.net))) : h('span', { class: 'mute' }, '–'); };
   const q = h('input', { placeholder: 'Search name, roll or admission no.', type: 'search' });
   const tbl = h('div');
   const draw = () => {
     const t = q.value.trim().toLowerCase();
     const list = d.students.filter((x) => !t || (x.name + ' ' + x.roll_no + ' ' + x.admission_no).toLowerCase().includes(t));
     const par = (n, m) => (n || m) ? h('div', {}, n || '', m && h('div', { class: 'small mute' }, m)) : h('span', { class: 'mute' }, '-');
-    fill(tbl, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Roll', 'Admission no.', 'Name', 'Gender', 'Date of birth', 'Father', 'Mother'].map((x) => h('th', {}, x)))),
-      h('tbody', {}, list.map((x) => h('tr', {}, h('td', {}, x.roll_no), h('td', {}, x.admission_no), h('td', {}, h('b', {}, x.name)), h('td', {}, x.gender), h('td', {}, x.dob ? fmtDate(x.dob) : ''), h('td', {}, par(x.father_name, x.father_mobile)), h('td', {}, par(x.mother_name, x.mother_mobile))))))));
+    fill(tbl, h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Roll', 'Admission no.', 'Name', 'Conduct', 'Gender', 'Date of birth', 'Father', 'Mother'].map((x) => h('th', {}, x)))),
+      h('tbody', {}, list.map((x) => h('tr', {}, h('td', {}, x.roll_no), h('td', {}, x.admission_no), h('td', {}, h('b', {}, x.name)), h('td', { class: 'num' }, pts(x)), h('td', {}, x.gender), h('td', {}, x.dob ? fmtDate(x.dob) : ''), h('td', {}, par(x.father_name, x.father_mobile)), h('td', {}, par(x.mother_name, x.mother_mobile))))))));
   };
   q.oninput = draw;
   fill(out, h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, sel.label), h('div', { class: 'small mute' }, d.students.length + ' students · You teach ' + (d.subjects.join(', ') || '-') + ' · ' + (d.frappe_configured ? 'Synced from Frappe' + (d.last_sync ? ' ' + fmtTs(d.last_sync) : '') : 'Frappe not configured'))),
-    h('button', { class: 'btn', onclick: () => go('new') }, 'Start a test')), h('div', { style: 'margin:12px 0' }, q), tbl));
+    h('div', { class: 'row' }, cd && h('button', { class: 'btn ghost', onclick: () => { CS.group = { class_name: sel.class_name, section: sel.section }; go('conduct'); } }, icon('star'), 'Merits & demerits'), h('button', { class: 'btn', onclick: () => go('new') }, 'Start a test'))), h('div', { style: 'margin:12px 0' }, q), tbl));
   draw();
 }
 
@@ -1356,6 +1360,119 @@ async function pgAdminSync() {
   ] });
 }
 
+// ---------- merits & demerits (the SIS keeps the record; UpMark gives, shows and syncs) ----------
+// Points are always positive: the category's type decides merit (olive) or demerit (pink), as in the SIS.
+const CS = { group: null };
+const signed = (n) => (n > 0 ? '+' + n : String(n));
+const ptChip = (e) => h('span', { class: 'pt ' + (e.point_type === 'Merit' ? 'm' : 'd') }, (e.point_type === 'Merit' ? '+' : '−') + e.points);
+const conductSync = (e) => syncDot({ state: e.state === 'synced' ? 'green' : e.error ? 'red' : 'yellow', last_error: e.error });
+function conductEntry(e, canDelete, after) {
+  return h('div', { class: 'li ce' },
+    h('span', { class: 'ce-ic ' + (e.point_type === 'Merit' ? 'm' : 'd') }, icon(e.point_type === 'Merit' ? 'star' : 'alert')),
+    h('div', { class: 'grow' }, h('div', {}, h('b', {}, e.student || 'Student'), ' · ', e.category, ' ', ptChip(e)),
+      h('div', { class: 'small mute' }, [fmtDate(e.date), e.awarded_by && 'by ' + e.awarded_by, e.remarks].filter(Boolean).join(' · '))),
+    conductSync(e),
+    canDelete && h('button', { class: 'btn sm quiet', onclick: async () => {
+      if (!(await ask('Delete this entry?', (e.student || 'Student') + ': ' + e.category + ' ' + (e.point_type === 'Merit' ? '+' : '−') + e.points + '. It is removed from the SIS as well.', 'Delete', { danger: true }))) return;
+      try { await api('DELETE', '/conduct/' + e.id); toast('Entry deleted'); after(); } catch (x) { toast(x.message, true); }
+    } }, 'Delete'));
+}
+// awardSheet gives points to one or more students of a section. pre: ids ticked at the start; type: 'Merit' | 'Demerit'.
+async function awardSheet(students, pre, type, done) {
+  let cats;
+  try { cats = (await api('GET', '/conduct/categories')).categories; } catch (x) { return toast(x.message, true); }
+  const elig = students.filter((s) => s.in_sis !== false);
+  const sel = new Set(pre || []);
+  let kind = type || 'Merit', cat = null, pts = 0, date = todayStr();
+  const body = h('div'), err = h('div', { class: 'err-msg' });
+  const remarks = h('textarea', { rows: 2, maxLength: 500, placeholder: 'What happened? e.g. inter-house football winners' });
+  const okBtn = h('button', { class: 'btn grow', id: 'award' });
+  const label = () => {
+    const n = sel.size;
+    okBtn.disabled = !cat || !n || !(pts > 0);
+    okBtn.textContent = cat && n ? 'Give ' + pts + ' ' + kind.toLowerCase() + ' point' + (pts === 1 ? '' : 's') + ' to ' + (n === 1 ? students.find((s) => sel.has(s.id)).name : n + ' students') : 'Pick a category and students';
+  };
+  const draw = () => {
+    const list = cats.filter((c) => c.point_type === kind);
+    const ptsIn = h('input', { type: 'number', min: 1, max: 100, inputmode: 'numeric', value: pts || '', style: 'max-width:120px', 'aria-label': 'Points', oninput: (e) => { pts = parseInt(e.target.value, 10) || 0; label(); } });
+    const boxes = elig.map((s) => h('label', { class: 'pick' + (sel.has(s.id) ? ' on' : '') },
+      h('input', { type: 'checkbox', checked: sel.has(s.id), onchange: (e) => { e.target.checked ? sel.add(s.id) : sel.delete(s.id); e.target.parentNode.classList.toggle('on', e.target.checked); allBtn.textContent = sel.size === elig.length ? 'Clear all' : 'Select all'; count.textContent = 'Students (' + sel.size + ')'; label(); } }),
+      h('span', { class: 'r' }, s.roll_no), h('span', { class: 'grow' }, s.name)));
+    const count = h('label', { class: 'f' }, 'Students (' + sel.size + ')');
+    const allBtn = h('button', { class: 'btn sm quiet', type: 'button', onclick: () => { if (sel.size === elig.length) sel.clear(); else elig.forEach((s) => sel.add(s.id)); draw(); } }, sel.size === elig.length ? 'Clear all' : 'Select all');
+    fill(body,
+      h('div', { class: 'seg kind' }, ['Merit', 'Demerit'].map((k) => h('button', { type: 'button', class: (kind === k ? 'on ' : '') + (k === 'Merit' ? 'm' : 'd'), onclick: () => { if (kind !== k) { kind = k; cat = null; pts = 0; draw(); } } }, k))),
+      h('label', { class: 'f' }, 'Category'),
+      h('div', { class: 'pills', style: 'margin-top:0' }, list.map((c) => h('button', { type: 'button', class: 'pill sm' + (cat === c.name ? ' on' : ''), title: c.description, onclick: () => { cat = c.name; pts = c.default_points; draw(); } }, c.name, h('span', { class: 'small', style: 'margin-left:6px;opacity:.65' }, c.default_points)))),
+      h('label', { class: 'f' }, 'Points'), h('div', { class: 'row' }, ptsIn, h('span', { class: 'small mute' }, cat ? 'Default for ' + cat + '. Change it if you need to.' : 'Filled in from the category.')),
+      h('div', { class: 'row sp' }, count, allBtn),
+      h('div', { class: 'picks' }, boxes),
+      h('label', { class: 'f' }, 'Date'), h('input', { type: 'date', value: date, max: todayStr(), style: 'max-width:200px', onchange: (e) => (date = e.target.value) }),
+      h('label', { class: 'f' }, 'Remarks (optional)'), remarks, err);
+    label();
+  };
+  okBtn.onclick = async () => {
+    err.textContent = ''; okBtn.disabled = true;
+    try {
+      const r = await api('POST', '/conduct', { student_ids: [...sel], category: cat, points: pts, date, remarks: remarks.value });
+      ov.close();
+      if (r.point_type === 'Merit') celebrate(r.points, 'merit point' + (r.points === 1 ? '' : 's') + (r.created > 1 ? ' each for ' + r.created + ' students' : ''));
+      toast((r.point_type === 'Merit' ? 'Merit' : 'Demerit') + ' recorded for ' + r.created + ' student' + (r.created === 1 ? '' : 's') + '. It goes to the SIS now.');
+      done && done();
+    } catch (x) { err.textContent = x.offline ? 'Giving points needs a connection. Try again when you are back online.' : x.message; label(); }
+  };
+  draw();
+  const ov = overlay([h('h2', {}, 'Give points'), h('p', { class: 'mute small', style: 'margin-top:4px' }, 'Saved in the SIS as a Student Conduct Point. Only the admin can delete an entry.'), body,
+    h('div', { class: 'row', style: 'margin-top:14px' }, okBtn, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancel'))]);
+}
+async function pgConduct() {
+  const admin = isAdmin();
+  const scope = await api('GET', '/scope');
+  const groups = scope.groups;
+  if (!CS.group || !groups.find((g) => g.class_name === CS.group.class_name && g.section === CS.group.section)) CS.group = admin ? null : groups[0] || null;
+  const school = admin ? await api('GET', '/admin/conduct') : null;
+  const out = h('div');
+  const pick = h('select', { 'aria-label': 'Section', style: 'width:auto', onchange: () => { CS.group = groups[+pick.value] || null; render(); } },
+    admin && h('option', { value: '' }, 'Whole school'), groups.map((g, i) => h('option', { value: i, selected: CS.group && g.class_name === CS.group.class_name && g.section === CS.group.section }, g.label)));
+  const giveBtn = CS.group && h('button', { class: 'cta', id: 'give' }, icon('star'), h('span', { class: 'lbl' }, 'Give points'));
+  shellMount({ title: 'Merits & demerits', sub: 'Conduct points, kept in the SIS', cta: giveBtn,
+    content: groups.length === 0 ? h('div', { class: 'card' }, emptyState('school', 'No classes are assigned to you yet. Ask the administrator.')) : [h('div', { class: 'row', style: 'margin-bottom:14px' }, pick), out] });
+  if (!CS.group) return drawSchool(out, school);
+  const d = await api('GET', '/conduct?class_name=' + encodeURIComponent(CS.group.class_name) + '&section=' + encodeURIComponent(CS.group.section));
+  const again = () => render();
+  giveBtn.onclick = () => awardSheet(d.students, [], 'Merit', again);
+  const t = d.totals;
+  fill(out,
+    h('div', { class: 'stats' }, statCard('', t.merit, 'Merit points', CS.group.label + (d.academic_year ? ' · ' + d.academic_year : ' this year'), 't-olive'), statCard('', t.demerit, 'Demerit points', t.entries + ' entries in all', t.demerit ? 't-pink' : ''), statCard('', signed(t.net), 'Net', 'merit minus demerit')),
+    h('div', { class: 'cols' },
+      h('div', {}, h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h3', { style: 'margin:0' }, 'Students'), h('span', { class: 'small mute' }, 'Tap + or − to give points')),
+        h('div', { class: 'tscroll' }, h('table', { class: 'tbl', id: 'ctbl' }, h('thead', {}, h('tr', {}, ['Roll', 'Student', 'Merit', 'Demerit', 'Net', ''].map((x, i) => h('th', { class: i === 0 || i === 2 || i === 3 ? 'cx' : '' }, x)))),
+          h('tbody', {}, d.students.map((s) => h('tr', {}, h('td', { class: 'num cx' }, s.roll_no), h('td', {}, h('b', {}, s.name), !s.in_sis && h('div', { class: 'small mute' }, 'Not in the SIS yet'),
+              h('div', { class: 'small mute cm' }, 'Roll ' + s.roll_no + ' · ', h('span', { class: 'pm' }, '+' + s.merit), ' / ', h('span', { class: 'pd' }, '−' + s.demerit))),
+            h('td', { class: 'num pm cx' }, s.merit ? '+' + s.merit : '–'), h('td', { class: 'num pd cx' }, s.demerit ? '−' + s.demerit : '–'), h('td', { class: 'num' }, h('b', {}, s.entries ? signed(s.net) : '–')),
+            h('td', {}, s.in_sis && h('div', { class: 'row', style: 'flex-wrap:nowrap;gap:6px;justify-content:flex-end' },
+              h('button', { class: 'pm-btn m', 'aria-label': 'Merit for ' + s.name, onclick: () => awardSheet(d.students, [s.id], 'Merit', again) }, '+'),
+              h('button', { class: 'pm-btn d', 'aria-label': 'Demerit for ' + s.name, onclick: () => awardSheet(d.students, [s.id], 'Demerit', again) }, '−')))))))))),
+      h('div', {}, h('div', { class: 'card' }, h('h3', {}, 'Latest entries'), d.recent.length ? d.recent.slice(0, 25).map((e) => conductEntry(e, d.can_delete, again)) : emptyState('star', 'No points yet this year. Give the first merit with the button above.')))));
+}
+function drawSchool(out, s) {
+  const t = s.totals, again = () => render();
+  const person = (p, key) => h('div', { class: 'li' }, h('div', { class: 'grow' }, h('b', {}, p.name), h('div', { class: 'small mute' }, p.class + ' · +' + p.merit + ' / −' + p.demerit)), h('b', { class: key === 'd' ? 'pd' : 'pm' }, key === 'd' ? '−' + p.demerit : signed(p.net)));
+  fill(out,
+    !s.frappe_configured && h('div', { class: 'banner warn' }, 'The SIS is not connected. Points are kept here and sent once it is.'),
+    s.pending_sync > 0 && h('div', { class: 'banner wait' }, s.pending_sync + ' entr' + (s.pending_sync === 1 ? 'y is' : 'ies are') + ' waiting to reach the SIS.'),
+    h('div', { class: 'stats' }, statCard('', t.merit, 'Merit points', 'whole school this year', 't-olive'), statCard('', t.demerit, 'Demerit points', t.entries + ' entries in all', t.demerit ? 't-pink' : ''), statCard('', signed(t.net), 'Net', s.sections.length + ' section' + (s.sections.length === 1 ? '' : 's') + ' with points')),
+    h('div', { class: 'cols' },
+      h('div', {},
+        h('div', { class: 'card' }, h('h3', {}, 'By section'), s.sections.length === 0 ? emptyState('star', 'No points yet this year. Pick a section above to give the first one.') :
+          h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Section', 'Merit', 'Demerit', 'Net', 'Entries'].map((x) => h('th', {}, x)))),
+            h('tbody', {}, s.sections.map((x) => h('tr', { class: 'click', onclick: () => { CS.group = { class_name: x.class_name, section: x.section }; render(); } }, h('td', {}, h('b', {}, x.label)), h('td', { class: 'num pm' }, '+' + x.merit), h('td', { class: 'num pd' }, '−' + x.demerit), h('td', { class: 'num' }, h('b', {}, signed(x.net))), h('td', { class: 'num' }, x.entries))))))),
+        h('div', { class: 'card' }, h('h3', {}, 'Latest entries'), s.recent.length ? s.recent.map((e) => conductEntry(e, true, again)) : emptyState('star', 'Nothing yet.'))),
+      h('div', {},
+        h('div', { class: 'card' }, h('h3', {}, 'Top of the school'), s.top.length ? s.top.map((p) => person(p, 'm')) : emptyState('star', 'Leaders show up once merits are given.')),
+        h('div', { class: 'card' }, h('h3', {}, 'Most demerits'), s.watch.length ? s.watch.map((p) => person(p, 'd')) : emptyState('check', 'No demerits this year.')))));
+}
+
 // ---------- staff: per-student weekly report (screen + print) ----------
 const R = { cls: null, sid: '', days: 7 };
 async function pgReports() {
@@ -1389,6 +1506,7 @@ async function pgReports() {
   };
   await load();
 }
+const conductSum = (c) => c && c.entries ? h('div', {}, h('small', {}, 'Conduct (year)'), h('b', {}, h('span', { class: 'pm' }, '+' + c.merit), ' / ', h('span', { class: 'pd' }, '−' + c.demerit), ' = ' + signed(c.net))) : null;
 function reportCard(x, d) {
   const tag = (t) => t ? h('span', { class: 'rtag', style: '--c:' + TAGS[t][1] }, TAGS[t][0]) : h('span', { class: 'mute' }, '-');
   const bars = x.subjects.map((s) => h('div', { class: 'rbar' }, h('div', { class: 'rl' }, s.subject),
@@ -1399,7 +1517,7 @@ function reportCard(x, d) {
     h('div', { class: 'rinfo' }, h('div', {}, h('small', {}, 'Student'), h('b', {}, x.name)), h('div', {}, h('small', {}, 'Class'), h('b', {}, d.class)), h('div', {}, h('small', {}, 'Roll no.'), h('b', {}, x.roll_no || '-')), h('div', {}, h('small', {}, 'Admission no.'), h('b', {}, x.admission_no || '-')),
       x.father_name && h('div', {}, h('small', {}, 'Parent / Guardian'), h('b', {}, x.father_name))),
     x.tests + x.absent === 0 ? emptyState('report', 'No approved tests in this period.') : [
-      h('div', { class: 'rsum' }, h('div', {}, h('small', {}, 'Overall average'), h('b', { class: 'big' }, x.tests ? x.avg + '%' : '-')), h('div', {}, h('small', {}, 'Performance'), tag(x.tag)), h('div', {}, h('small', {}, 'Tests taken'), h('b', {}, x.tests)), h('div', {}, h('small', {}, 'Absent / exempt'), h('b', {}, x.absent))),
+      h('div', { class: 'rsum' }, h('div', {}, h('small', {}, 'Overall average'), h('b', { class: 'big' }, x.tests ? x.avg + '%' : '-')), h('div', {}, h('small', {}, 'Performance'), tag(x.tag)), h('div', {}, h('small', {}, 'Tests taken'), h('b', {}, x.tests)), h('div', {}, h('small', {}, 'Absent / exempt'), h('b', {}, x.absent)), conductSum(x.conduct)),
       x.subjects.length > 0 && [h('h4', {}, 'Subject-wise average'), h('div', { class: 'rbars' }, bars), h('div', { class: 'small mute' }, 'Coloured bar = student · marker line = class average')],
       h('h4', {}, 'Test details'),
       h('div', { class: 'tscroll' }, h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Date', 'Test', 'Subject', 'Marks', '%', 'Class avg', 'Remark'].map((c) => h('th', {}, c)))),

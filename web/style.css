@@ -411,3 +411,21 @@ table.t{border-spacing:0;background:var(--card);border:1px solid color-mix(in sr
 /* phones: no backdrop blur on scrolling bars */
 @media (max-width:899px){.top,.ctx{backdrop-filter:none;background-color:var(--bg)}}
 .nt-pv .pv-topic{font-weight:var(--w-bold);font-size:.95rem;line-height:1.3;margin-top:4px}.nt-pv .pv-topic:empty{display:none}
+/* ---- merits & demerits: olive adds, pink takes away ---- */
+.pt{display:inline-block;border-radius:999px;padding:1px 8px;font-size:.78rem;font-weight:var(--w-black);font-variant-numeric:tabular-nums;color:#17150F}
+.pt.m{background:var(--olive)}.pt.d{background:var(--pink)}
+.pm{color:var(--ok);font-weight:var(--w-strong)}.pd{color:var(--bad);font-weight:var(--w-strong)}
+.pm-btn{width:38px;height:38px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);font-size:1.2rem;font-weight:var(--w-black);line-height:1;display:grid;place-items:center;color:var(--ink)}
+.pm-btn.m:hover{background:var(--olive);border-color:var(--olive);color:#17150F}.pm-btn.d:hover{background:var(--pink);border-color:var(--pink);color:#17150F}
+.ce{flex-wrap:nowrap;align-items:flex-start}.ce .sdot{margin-top:8px}
+.ce-ic{width:34px;height:34px;border-radius:var(--r-s);display:grid;place-items:center;flex:none;color:#17150F}.ce-ic .ic{width:18px;height:18px}
+.ce-ic.m{background:var(--olive)}.ce-ic.d{background:var(--pink)}
+.seg.kind{display:flex;margin-top:12px}.seg.kind button{flex:1;min-height:44px;font-size:.95rem}
+.seg.kind button.on.m{background:var(--olive);color:#17150F}.seg.kind button.on.d{background:var(--pink);color:#17150F}
+.picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-s);padding:6px;background:var(--card2)}
+.pick{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-s);cursor:pointer;font-weight:600;font-size:.92rem}
+.pick input{width:18px;height:18px;min-height:0;flex:none;accent-color:var(--ink)}.pick .r{color:var(--mute);font-variant-numeric:tabular-nums;min-width:22px}
+.pick.on{background:var(--card)}
+@media(min-width:700px){.sheet:has(.picks){max-width:640px}}
+#ctbl .cm{display:none}
+@media (max-width:600px){#ctbl .cx{display:none}#ctbl .cm{display:block;margin-top:2px}#ctbl th,#ctbl td{padding:10px 6px}#ctbl .pm-btn{width:34px;height:34px}}

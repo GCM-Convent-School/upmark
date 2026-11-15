@@ -113,6 +113,9 @@ func main() {
 	if err := a.bootstrapAdmin(); err != nil {
 		log.Fatal(err)
 	}
+	if err := a.seedConductCategories(); err != nil {
+		log.Fatal(err)
+	}
 	if cfg.SeedDemo {
 		if err := a.seedDemo(); err != nil {
 			log.Fatal(err)
