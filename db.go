@@ -156,6 +156,7 @@ func (t *wtx) Rollback() error { defer t.release(); return t.Tx.Rollback() }
 // migrate adds columns introduced after the first release (CREATE TABLE IF NOT EXISTS never alters an existing table).
 func migrate(db *sql.DB) error {
 	add := map[string][][2]string{
+		"users": {{"frappe_instructor", "TEXT NOT NULL DEFAULT ''"}},
 		"exams": {{"approved_at", "TEXT NOT NULL DEFAULT ''"}, {"approved_by", "INTEGER NOT NULL DEFAULT 0"}, {"parents_sent_at", "TEXT NOT NULL DEFAULT ''"}},
 		"students": {{"gender", "TEXT NOT NULL DEFAULT ''"}, {"dob", "TEXT NOT NULL DEFAULT ''"}, {"father_name", "TEXT NOT NULL DEFAULT ''"},
 			{"father_mobile", "TEXT NOT NULL DEFAULT ''"}, {"mother_name", "TEXT NOT NULL DEFAULT ''"}, {"mother_mobile", "TEXT NOT NULL DEFAULT ''"}},

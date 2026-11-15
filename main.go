@@ -129,6 +129,11 @@ func main() {
 		log.Fatal(err)
 	}
 	a.store = checkStorage(cfg.DBPath)
+	// db_id names this database; marks saved offline on a phone are tied to it, so after a reset
+	// (new database, test numbers starting again) they are never sent to a different test
+	if a.setting("db_id") == "" {
+		a.setSetting("db_id", randHex(8))
+	}
 	if a.setting("db_created_at") == "" {
 		a.setSetting("db_created_at", nowStr())
 	}

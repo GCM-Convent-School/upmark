@@ -152,13 +152,20 @@ func (a *App) adminUsersImport(w http.ResponseWriter, r *http.Request, u *User) 
 		}
 		row.Status = "new"
 		if !dry {
-			if _, err := a.db.Exec(`INSERT INTO users(name,mobile,email,role,created_at) VALUES(?,?,?,?,?)`,
-				in.Name, nullIfEmpty(in.Mobile), nullIfEmpty(in.Email), "teacher", nowStr()); err != nil {
+			res, err := a.db.Exec(`INSERT INTO users(name,mobile,email,role,created_at) VALUES(?,?,?,?,?)`,
+				in.Name, nullIfEmpty(in.Mobile), nullIfEmpty(in.Email), "teacher", nowStr())
+			if err != nil {
 				row.Status, row.Note = "invalid", "Could not save"
 				continue
 			}
+			if id, _ := res.LastInsertId(); id > 0 && a.frappe.Enabled() { // new teachers become SIS Instructors
+				queueInstructor(a.db, id)
+			}
 			added++
 		}
+	}
+	if added > 0 {
+		a.wake()
 	}
 	writeJSON(w, 200, map[string]any{"rows": rows, "dry": dry, "added": added})
 	return nil

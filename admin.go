@@ -130,7 +130,7 @@ func (a *App) adminExams(w http.ResponseWriter, r *http.Request, u *User) error 
 }
 
 func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, u *User) error {
-	rows, err := a.db.Query(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active,
+	rows, err := a.db.Query(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active,u.frappe_instructor,
 		(SELECT COUNT(*) FROM allocations WHERE user_id=u.id) FROM users u ORDER BY u.role, u.name`)
 	if err != nil {
 		return err
@@ -139,11 +139,17 @@ func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, u *User) error 
 	out := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, role string
+		var name, role, link string
 		var mob, em sql.NullString
 		var active, n int
-		rows.Scan(&id, &name, &mob, &em, &role, &active, &n)
-		out = append(out, map[string]any{"id": id, "name": name, "mobile": mob.String, "email": em.String, "role": role, "active": active == 1, "allocations": n})
+		rows.Scan(&id, &name, &mob, &em, &role, &active, &link, &n)
+		out = append(out, map[string]any{"id": id, "name": name, "mobile": mob.String, "email": em.String, "role": role, "active": active == 1, "allocations": n, "sis_instructor": link})
+	}
+	rows.Close()
+	for _, x := range out { // after the scan: sisState queries the same database
+		if x["role"] == "teacher" {
+			x["sis_state"], x["sis_error"] = a.sisState(x["id"].(int64), x["sis_instructor"].(string))
+		}
 	}
 	writeJSON(w, 200, map[string]any{"users": out})
 	return nil
@@ -199,6 +205,10 @@ func (a *App) adminUserCreate(w http.ResponseWriter, r *http.Request, u *User) e
 		return err
 	}
 	id, _ := res.LastInsertId()
+	if in.Role == "teacher" && a.frappe.Enabled() { // a new teacher becomes an SIS Instructor
+		queueInstructor(a.db, id)
+		a.wake()
+	}
 	writeJSON(w, 201, map[string]any{"id": id})
 	return nil
 }
@@ -230,6 +240,7 @@ func (a *App) adminUserUpdate(w http.ResponseWriter, r *http.Request, u *User) e
 	if active == 0 {
 		a.db.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
 	}
+	a.pushTeacher(id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 	return nil
 }
@@ -283,6 +294,7 @@ func (a *App) adminAllocPut(w http.ResponseWriter, r *http.Request, u *User) err
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	a.pushTeacher(id)
 	writeJSON(w, 200, map[string]any{"ok": true, "count": len(in.Allocations)})
 	return nil
 }
@@ -539,6 +551,22 @@ func (a *App) adminAllocAssign(w http.ResponseWriter, r *http.Request, u *User) 
 	if err != nil {
 		return err
 	}
+	a.pushTeacher(in.UserID)
 	writeJSON(w, 200, map[string]any{"ok": true})
 	return nil
+}
+
+// pushTeacher queues an SIS update for a teacher who is in the SIS, or active and so should be.
+// Teachers who were never in the SIS are added from the Teachers page instead (see instructors.go).
+func (a *App) pushTeacher(id int64) {
+	if !a.frappe.Enabled() {
+		return
+	}
+	var link string
+	var role string
+	if a.db.QueryRow(`SELECT frappe_instructor,role FROM users WHERE id=?`, id).Scan(&link, &role) != nil || role != "teacher" || link == "" {
+		return
+	}
+	queueInstructor(a.db, id)
+	a.wake()
 }

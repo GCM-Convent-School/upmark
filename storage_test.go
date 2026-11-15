@@ -24,3 +24,20 @@ func TestClassifyMount(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeSlot(t *testing.T) {
+	plan := func(f, to string) frappeDoc { return frappeDoc{"from_time": f, "to_time": to} }
+	for _, c := range []struct {
+		busy     []frappeDoc
+		from, to string
+	}{
+		{nil, "09:00:00", "10:00:00"},
+		{[]frappeDoc{plan("09:00:00", "10:00:00")}, "10:00:00", "11:00:00"},
+		{[]frappeDoc{plan("9:00:00", "10:00:00"), plan("10:00:00.000000", "11:30:00")}, "11:30:00", "12:30:00"},
+		{[]frappeDoc{plan("09:30:00", "10:15:00")}, "10:15:00", "11:15:00"},
+	} {
+		if f, to := freeSlot(c.busy); f != c.from || to != c.to {
+			t.Errorf("busy %v: got %s-%s want %s-%s", c.busy, f, to, c.from, c.to)
+		}
+	}
+}

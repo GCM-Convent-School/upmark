@@ -45,12 +45,12 @@ func newMock() *mockFrappe {
 		m.put("Conduct Category", frappeDoc{"name": c.Name, "category_name": c.Name, "point_type": c.Type, "default_points": float64(c.Default), "enabled": float64(1), "description": c.Description})
 	}
 	m.put("User", frappeDoc{"name": "teacher.a@school.test", "email": "teacher.a@school.test"})
-	m.put("Employee", frappeDoc{"name": "EMP-0001", "user_id": "teacher.a@school.test"})
-	m.put("Instructor", frappeDoc{"name": "INS-0001", "employee": "EMP-0001", "instructor_log": []any{
-		map[string]any{"student_group": "Grade 8-A", "course": "Hindi"},
-		map[string]any{"student_group": "Grade 8-A", "course": "Punjabi"},
-		map[string]any{"student_group": "Grade 8-A", "course": "Mathematics"},
-		map[string]any{"student_group": "Grade 10-A", "course": "Mathematics"}}})
+	m.put("Employee", frappeDoc{"name": "EMP-0001", "employee_name": "Teacher A (Demo)", "user_id": "teacher.a@school.test", "cell_number": "+91 90000 00001", "status": "Active"})
+	m.put("Instructor", frappeDoc{"name": "INS-0001", "instructor_name": "Teacher A (Demo)", "status": "Active", "employee": "EMP-0001", "instructor_log": []any{
+		map[string]any{"student_group": "Grade 8-A", "course": "Hindi", "academic_year": "2026-27"},
+		map[string]any{"student_group": "Grade 8-A", "course": "Punjabi", "academic_year": "2026-27"},
+		map[string]any{"student_group": "Grade 8-A", "course": "Mathematics", "academic_year": "2026-27"},
+		map[string]any{"student_group": "Grade 10-A", "course": "Mathematics", "academic_year": "2026-27"}}})
 	return m
 }
 
@@ -251,6 +251,19 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 417, msg)
 			return
 		}
+		if dt == "Assessment Plan" { // as in education.utils.validate_overlap
+			f1, _ := clockMin(d["from_time"])
+			t1, _ := clockMin(d["to_time"])
+			for _, n := range m.order[dt] {
+				o := m.docs[dt][n]
+				f2, _ := clockMin(o["from_time"])
+				t2, _ := clockMin(o["to_time"])
+				if docstatus(o) < 2 && str(o, "student_group") == str(d, "student_group") && str(o, "schedule_date") == str(d, "schedule_date") && f1 < t2 && f2 < t1 {
+					jerr(w, 417, "education.education.utils.OverlapError: This Assessment Plan conflicts with "+n+" for Student Group "+str(d, "student_group"))
+					return
+				}
+			}
+		}
 		switch dt {
 		case "Assessment Group":
 			d["name"] = str(d, "assessment_group_name")
@@ -318,6 +331,22 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *mockFrappe) validate(dt string, d frappeDoc) string {
+	if dt == "Instructor" { // Instructor Log rows need an academic year
+		if e := str(d, "employee"); e != "" && m.docs["Employee"][e] == nil {
+			return "Could not find Employee: " + e
+		}
+		if st, ok := d["status"]; ok && st != "Active" && st != "Left" {
+			return "Status must be Active or Left"
+		}
+		rows, _ := d["instructor_log"].([]any)
+		for _, r := range rows {
+			row, _ := r.(map[string]any)
+			if str(row, "academic_year") == "" {
+				return "Instructor Log: Academic Year is mandatory"
+			}
+		}
+		return ""
+	}
 	if dt == "Student Conduct Point" {
 		if m.docs["Student"][str(d, "student")] == nil {
 			return "Could not find Student: " + str(d, "student")

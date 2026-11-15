@@ -429,7 +429,7 @@ async function pgUpdates() {
 }
 async function discardDraft(e) {
   if (!(await ask('Discard this sheet?', e.label + '. Every mark entered in it will be deleted.', 'Discard', { danger: true }))) return;
-  try { await api('DELETE', '/exams/' + e.id); store.set('rea:stash:' + e.id, null); toast('Sheet discarded'); render(); } catch (x) { toast(x.message, true); }
+  try { await api('DELETE', '/exams/' + e.id); store.set(stashKey(e.id), null); toast('Sheet discarded'); render(); } catch (x) { toast(x.message, true); }
 }
 
 // ---------- teacher: my classes (Frappe student details) ----------
@@ -572,7 +572,7 @@ async function openExam(id, opts = {}) {
     for (const e of d.entries) W.entries[keyOf(e.student_id, e.subject)] = { status: e.status, comps: e.comps.map(num) };
     if (!W.locked) {
       try {
-        const st = JSON.parse(store.get('rea:stash:' + id) || 'null');
+        const st = JSON.parse(store.get(stashKey(id)) || 'null');
         if (st) { let n = 0; for (const [k, v] of Object.entries(st)) { const [sid, ...rest] = k.split('|'); if (W.roster.some((s) => String(s.id) === sid) && W.vis.includes(rest.join('|'))) { W.entries[k] = v; W.dirty.add(k); n++; } } if (n) toast('Restored ' + n + ' unsaved mark' + (n === 1 ? '' : 's') + ' from this device'); }
       } catch (_) {}
       const first = W.roster.findIndex((s) => !W.vis.every((sub) => entryState(s.id, sub) === 'done'));
@@ -602,7 +602,7 @@ const studentDone = (sid) => scopeSubjects().every((s) => entryState(sid, s) ===
 function stash() {
   try {
     const o = {}; for (const k of W.dirty) o[k] = W.entries[k];
-    store.set('rea:stash:' + W.id, W.dirty.size ? JSON.stringify(o) : null);
+    store.set(stashKey(W.id), W.dirty.size ? JSON.stringify(o) : null);
   } catch (_) {}
 }
 function touch(sid, subj) { W.dirty.add(keyOf(sid, subj)); W.missing.delete(sid); stash(); updateProgress(); }
@@ -907,13 +907,19 @@ async function saveDraft(silent) {
     if (!silent) toast('Saved ' + r.saved + ' mark' + (r.saved === 1 ? '' : 's')); updateProgress(); return true;
   } catch (e) { if (!silent || !e.offline) toast(e.offline ? 'Offline. Marks are safe on this phone and sync when you reconnect.' : e.message, true); return false; }
 }
+// Unsaved marks are kept on the phone per database and test. Keys written before a database reset
+// (or before this rule) carry another or no database id and are never sent: the same test number
+// can belong to a different test after a reset.
+const stashKey = (id) => 'rea:stash:' + (S.data && S.data.db_id ? S.data.db_id + ':' : '') + id;
 // syncStashes pushes marks typed offline on other sheets once the connection is back.
 async function syncStashes() {
   if (!navigator.onLine || !S.me) return;
-  let keys = []; try { keys = Object.keys(localStorage).filter((k) => k.startsWith('rea:stash:')); } catch (_) {}
+  const pre = stashKey('');
+  if (pre === 'rea:stash:') return; // database not known yet: never guess which test a stash belongs to
+  let keys = []; try { keys = Object.keys(localStorage).filter((k) => k.startsWith(pre)); } catch (_) {}
   let n = 0;
   for (const k of keys) {
-    const id = +k.slice(10); if (W && W.id === id) continue;
+    const id = +k.slice(pre.length); if (!id || (W && W.id === id)) continue;
     let obj; try { obj = JSON.parse(store.get(k) || 'null'); } catch (_) {} if (!obj) continue;
     try { await api('PUT', '/exams/' + id + '/marks', { entries: payloadFrom(obj) }); store.set(k, null); n++; }
     catch (e) { if (e.status === 409 || e.status === 404 || e.status === 403) store.set(k, null); }
@@ -1225,13 +1231,38 @@ async function pgAdminTeachers() {
   shellMount({ title: 'Teachers', sub: 'Add teachers and choose what they can see', content: [
     h('div', { class: 'card' }, h('h3', {}, 'Add a teacher'), h('div', { class: 'grid2' }, name, mob, em, role), err,
       h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => { try { await api('POST', '/admin/users', { name: name.value, mobile: mob.value, email: em.value, role: role.value }); toast('User added'); render(); } catch (e) { err.textContent = e.message; } } }, 'Add')),
-    importCard(),
+    importCard(), sisTeachersCard(d.users),
     d.users.map((u) => {
       const holder = h('div');
-      return h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, u.name), ' ', h('span', { class: 'badge' }, u.role), !u.active && h('span', { class: 'badge s-attn' }, 'inactive'), h('div', { class: 'small mute' }, [u.mobile, u.email].filter(Boolean).join(' · ') + ' · ' + u.allocations + ' allocations')),
-        h('div', { class: 'row' }, u.role === 'teacher' && h('button', { class: 'btn sm ghost', onclick: () => allocEditor(holder, u, scope) }, 'Classes & subjects'),
+      return h('div', { class: 'card', 'data-uid': u.id }, h('div', { class: 'row sp' }, h('div', {}, h('b', {}, u.name), ' ', h('span', { class: 'badge' }, u.role), !u.active && h('span', { class: 'badge s-attn' }, 'inactive'), ' ', sisChip(u), h('div', { class: 'small mute' }, [u.mobile, u.email].filter(Boolean).join(' · ') + ' · ' + u.allocations + ' allocations')),
+        h('div', { class: 'row' }, u.role === 'teacher' && u.sis_state === 'none' && u.active && h('button', { class: 'btn sm', onclick: (e) => addToSIS(e.target, '/admin/users/' + u.id + '/sis') }, 'Add to SIS'),
+          u.role === 'teacher' && h('button', { class: 'btn sm ghost', onclick: () => allocEditor(holder, u, scope) }, 'Classes & subjects'),
           h('button', { class: 'btn sm ghost', onclick: async () => { try { await api('PUT', '/admin/users/' + u.id, { ...u, active: !u.active }); render(); } catch (e) { toast(e.message, true); } } }, u.active ? 'Deactivate' : 'Activate'))), holder);
     })] });
+}
+// Teachers are SIS Instructors: the chip says whether this one is linked, on its way, or not there yet.
+function sisChip(u) {
+  if (u.role !== 'teacher') return null;
+  if (u.sis_state === 'linked') return h('span', { class: 'badge s-done', title: 'SIS Instructor ' + u.sis_instructor }, 'In the SIS');
+  if (u.sis_state === 'sending') return h('span', { class: 'badge s-wait' }, 'Sending to the SIS');
+  if (u.sis_state === 'error') return h('span', { class: 'badge s-attn', title: u.sis_error }, 'SIS retrying');
+  return h('span', { class: 'badge s-info' }, 'Not in the SIS');
+}
+async function addToSIS(btn, path) {
+  btn.disabled = true;
+  try { const r = await api('POST', path); toast(r.queued === 1 ? 'Sending to the SIS' : 'Sending ' + r.queued + ' teachers to the SIS'); setTimeout(render, 2500); }
+  catch (x) { toast(x.message, true); btn.disabled = false; }
+}
+function sisTeachersCard(users) {
+  const t = users.filter((u) => u.role === 'teacher' && u.active);
+  const none = t.filter((u) => u.sis_state === 'none'), errs = t.filter((u) => u.sis_state === 'error');
+  return h('div', { class: 'card', id: 'sis-teachers' }, h('h3', {}, 'Teachers in the SIS'),
+    h('p', { class: 'mute', style: 'margin-top:0;line-height:1.6' }, 'The SIS is the master list. Every active Instructor there is a teacher here, with classes from the Instructor log, and Sync roster brings in changes. Adding a teacher here, changing their classes or deactivating them updates their Instructor in the SIS.'),
+    h('p', { style: 'margin:0 0 10px' }, h('b', {}, t.length - none.length - errs.length), ' of ', t.length, ' active teachers are linked', errs.length ? [' · ', h('b', { class: 'pd' }, errs.length), ' retrying'] : ''),
+    errs.map((u) => h('div', { class: 'small', style: 'margin-bottom:6px' }, h('b', {}, u.name), ': ', u.sis_error)),
+    none.length > 0 && h('div', { class: 'row', style: 'gap:10px' },
+      h('button', { class: 'btn', id: 'sis-all', onclick: async (e) => { if (await ask('Add ' + none.length + ' teachers to the SIS?', 'Each becomes an Instructor in the SIS, linked to the Employee with the same email or mobile number when there is one, with their classes from UpMark.', 'Add to SIS')) addToSIS(e.target, '/admin/users/sis-all'); } }, 'Add ' + none.length + ' to the SIS'),
+      h('span', { class: 'small mute' }, 'Tip: run Sync roster first, so teachers who are already Instructors are linked rather than added again.')));
 }
 async function importPost(path, file, dry) {
   if (!file.files[0]) { toast('Choose a CSV or PDF file first', true); return null; }

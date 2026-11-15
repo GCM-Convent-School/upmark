@@ -106,6 +106,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	a.conductRoutes(mux)
 	a.backupRoutes(mux)
 	a.recoverRoutes(mux)
+	a.instructorRoutes(mux)
 	a.adminRoutes(mux)
 }
 
@@ -218,7 +219,7 @@ func (a *App) apiMe(w http.ResponseWriter, r *http.Request, u *User) error {
 	a.db.QueryRow(`SELECT COUNT(*) FROM exams e WHERE e.status='locked' AND `+where, args...).Scan(&locked)
 	a.db.QueryRow(`SELECT COUNT(*) FROM corrections WHERE requested_by=? AND state='pending'`, u.ID).Scan(&pendingCorr)
 	stats := map[string]int{"classes": classes, "subjects": subjects, "drafts": len(exams), "locked": locked, "pending_corrections": pendingCorr}
-	writeJSON(w, 200, map[string]any{"user": u, "drafts": exams, "draft_limit": 2, "recent": recent, "stats": stats})
+	writeJSON(w, 200, map[string]any{"user": u, "drafts": exams, "draft_limit": 2, "recent": recent, "stats": stats, "db_id": a.setting("db_id")})
 	return nil
 }
 

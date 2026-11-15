@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -299,35 +300,10 @@ func (a *App) doMasterSync() (map[string]any, error) {
 		return nil, err
 	}
 
-	// Instructor -> Employee mapping, used to derive teacher allocations by email
-	type instr struct {
-		email string
-		logs  []map[string]any
-	}
-	var instructors []instr
-	if rows, err := f.List("Instructor", []string{"name", "employee"}, nil); err == nil {
-		for _, r := range rows {
-			emp := str(r, "employee")
-			email := ""
-			if emp != "" {
-				if e, err := f.Get("Employee", emp); err == nil {
-					email = normIdent(firstNonEmpty(str(e, "user_id"), str(e, "prefered_email"), str(e, "personal_email")))
-				}
-			}
-			full, err := f.Get("Instructor", str(r, "name"))
-			if err != nil || email == "" {
-				continue
-			}
-			var logs []map[string]any
-			if l, ok := full["instructor_log"].([]any); ok {
-				for _, x := range l {
-					if m, ok := x.(map[string]any); ok {
-						logs = append(logs, m)
-					}
-				}
-			}
-			instructors = append(instructors, instr{email, logs})
-		}
+	// teachers come from the SIS Instructors (with contact details from their Employee)
+	instructors, instrErr := a.fetchInstructors()
+	if instrErr != nil {
+		log.Printf("instructor pull: %v", instrErr)
 	}
 
 	tx, err := a.begin()
@@ -383,30 +359,16 @@ func (a *App) doMasterSync() (map[string]any, error) {
 	for _, c := range courses {
 		tx.Exec(`INSERT OR IGNORE INTO courses(name) VALUES(?)`, str(c, "name"))
 	}
-	allocs := 0
-	for _, in := range instructors {
-		var uid int64
-		if err := tx.QueryRow(`SELECT id FROM users WHERE email=? AND active=1`, in.email).Scan(&uid); err != nil {
-			continue
-		}
-		tx.Exec(`DELETE FROM allocations WHERE user_id=? AND source='frappe'`, uid)
-		for _, l := range in.logs {
-			g, course := str(l, "student_group"), str(l, "course")
-			if g == "" || course == "" || !groupNames[g] {
-				continue
-			}
-			c, s := splitGroup(g)
-			tx.Exec(`INSERT OR IGNORE INTO courses(name) VALUES(?)`, course)
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO allocations(user_id,class_name,section,subject,source) VALUES(?,?,?,?,'frappe')`, uid, c, s, course); err == nil {
-				allocs++
-			}
-		}
+	var teach map[string]int
+	if instrErr == nil {
+		teach = a.applyInstructors(tx, instructors, groupNames)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return map[string]any{"groups": len(groupNames), "students_seen": len(students), "students_added": added, "students_updated": updated,
-		"students_retired": len(retire), "courses": len(courses), "allocations_from_erp": allocs}, nil
+		"students_retired": len(retire), "courses": len(courses), "allocations_from_erp": teach["allocations"],
+		"teachers_linked": teach["linked"], "teachers_added": teach["added"], "teachers_updated": teach["updated"], "teachers_left": teach["left"]}, nil
 }
 
 func firstNonEmpty(v ...string) string {
@@ -457,6 +419,8 @@ func (a *App) runDueJobs() bool {
 		runErr = a.syncCorrection(j)
 	case "conduct": // correction_id holds the conduct point id
 		runErr = a.syncConduct(j.corrID)
+	case "instructor": // student_id holds the teacher's user id
+		runErr = a.syncInstructor(j.studentID)
 	default:
 		runErr = fmt.Errorf("unknown job kind %q", j.kind)
 	}
@@ -590,9 +554,16 @@ func (a *App) ensurePlan(e *Exam, subject string, criteria []frappeDoc, submit b
 		if e.Topic != "" {
 			title += " – " + e.Topic
 		}
+		// Education refuses two plans for one student group at overlapping times on the same day,
+		// so each test takes the first free hour that day
+		from, to := "09:00:00", "10:00:00"
+		if busy, err := f.List("Assessment Plan", []string{"name", "from_time", "to_time"}, [][]any{
+			{"student_group", "=", e.StudentGroup}, {"schedule_date", "=", e.Date}, {"docstatus", "<", 2}}); err == nil {
+			from, to = freeSlot(busy)
+		}
 		doc, err := f.Insert("Assessment Plan", frappeDoc{
 			"assessment_name": title, "student_group": e.StudentGroup, "course": subject, "assessment_group": e.SubType,
-			"grading_scale": a.cfg.GradingScale, "schedule_date": e.Date, "from_time": "09:00:00", "to_time": "10:00:00",
+			"grading_scale": a.cfg.GradingScale, "schedule_date": e.Date, "from_time": from, "to_time": to,
 			"maximum_assessment_score": e.MaxTotal, "assessment_criteria": criteria})
 		if err != nil {
 			return "", err
@@ -711,4 +682,50 @@ func (a *App) syncCorrection(j job) error {
 	return addTimeline(a.db, j.examID, "System", "correction_synced", map[string]any{
 		"correction_id": j.corrID, "student": stName, "roll_no": roll, "subject": j.subject, "erp_document": newName,
 		"message": "Assessment Result re-synced to Frappe Education"})
+}
+
+// clockMin reads a Frappe time ("9:00:00", "09:00:00", "09:00:00.000000") as minutes after midnight.
+func clockMin(v any) (int, bool) {
+	var h, m int
+	if _, err := fmt.Sscanf(fmt.Sprint(v), "%d:%d", &h, &m); err != nil {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// freeSlot picks an hour that overlaps none of the given plans: 09:00 or right after an existing plan,
+// else the first free hour, half hour or minute of the day.
+func freeSlot(busy []frappeDoc) (string, string) {
+	free := func(start, length int) bool {
+		for _, b := range busy {
+			f, ok1 := clockMin(b["from_time"])
+			t, ok2 := clockMin(b["to_time"])
+			if ok1 && ok2 && start < t && f < start+length {
+				return false
+			}
+		}
+		return true
+	}
+	hhmm := func(m int) string { return fmt.Sprintf("%02d:%02d:00", m/60, m%60) }
+	// try 09:00 and the end of each existing plan first, so the day's tests sit back to back
+	starts := []int{9 * 60}
+	for _, b := range busy {
+		if t, ok := clockMin(b["to_time"]); ok && t >= 9*60 {
+			starts = append(starts, t)
+		}
+	}
+	sort.Ints(starts)
+	for _, st := range starts {
+		if st+60 < 24*60 && free(st, 60) {
+			return hhmm(st), hhmm(st + 60)
+		}
+	}
+	for _, step := range []int{60, 30, 1} {
+		for start := 9 * 60; start+step <= 24*60-1; start += step {
+			if free(start, step) {
+				return hhmm(start), hhmm(start + step)
+			}
+		}
+	}
+	return "09:00:00", "10:00:00"
 }

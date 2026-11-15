@@ -121,7 +121,7 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
   await page.click('.seg button[aria-label="Card view"]').catch(() => {});
   await page.keyboard.press('7'); await page.keyboard.press('Enter'); await page.keyboard.press('8'); await page.keyboard.press('Enter');
   ok((await page.locator('#prog').innerText()) === '2 / 35', 'Two marks entered offline');
-  ok(await page.evaluate((id) => !!localStorage.getItem('rea:stash:' + id), off), 'Offline marks are kept on the phone');
+  ok(await page.evaluate((id) => Object.keys(localStorage).some((k) => new RegExp('^rea:stash:[0-9a-f]{16}:' + id + '$').test(k) && localStorage.getItem(k)), off), 'Offline marks are kept on the phone, tied to this database');
   await ctx.setOffline(false);
   await page.waitForFunction(async (id) => { const r = await fetch('/api/exams/' + id, { headers: { 'X-Requested-With': 'rea' } }); const d = await r.json(); return d.entries && d.entries.length === 2; }, off, { timeout: 15000 }).then(() => ok(true, 'Marks sync once the phone is back online'), () => ok(false, 'Marks did not sync after reconnecting'));
 
