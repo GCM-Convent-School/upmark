@@ -108,6 +108,40 @@ try {
   ok(r.status === 200 && r.data.Teachers === 0 && r.data.Tests === 0 && r.data.TestsSkipped >= 1, 'Importing again changes nothing');
   rec = (await adminC('GET', '/admin/recovery')).data;
   ok(rec.files[0].imported !== '', 'The file is marked as imported');
+
+  console.log('A daily copy to Google Drive');
+  const drv = async () => (await fetch(MOCK + '/__drive/files')).json();
+  r = await admin('PUT', '/admin/backup/drive', { url: 'https://evil.test/upload' });
+  ok(r.status === 400, 'Only an Apps Script web app link is accepted');
+  ok((await A('PUT', '/admin/backup/drive', { url: '' })).status === 403, 'Teachers cannot set the link');
+  r = await admin('PUT', '/admin/backup/drive', { url: 'https://script.google.com/macros/s/AKfycbTESTLINK1234567890abcdef/exec' });
+  let bk = (await admin('GET', '/admin/overview')).data.backup;
+  ok(r.status === 200 && bk.drive === true && bk.drive_link.includes('…') && !bk.drive_link.includes('TESTLINK1234567890ab'), 'Saving a link turns it on, shown shortened');
+  await admin('PUT', '/admin/backup/drive', { url: '' });
+  ok((await admin('GET', '/admin/overview')).data.backup.drive === false, 'An empty link turns it off');
+
+  const D = await server(8083, '/tmp/rea-test-d', { AUTO_RESTORE: '0', SEED_DEMO: '1', BACKUP_UPLOAD_URL: MOCK + '/__drive/exec' });
+  const adminD = await login(D.base, '9000000000');
+  await adminD('POST', '/admin/users', { name: 'Only on D', mobile: '9000000089', role: 'teacher' });
+  r = await adminD('POST', '/admin/backup');
+  let got = await drv();
+  ok(r.status === 200 && r.data.drive === true && got.length === 1, 'Back up now also sends a copy to the upload link');
+  ok(got[0].app === 'upmark' && got[0].file === r.data.file && got[0].decoded && got[0].gzip && got[0].bytes === r.data.bytes, 'as base64 of the gzipped database, with app=upmark and the file name');
+  bk = (await adminD('GET', '/admin/overview')).data.backup;
+  ok(bk.last_drive !== '' && bk.drive_error === '', 'Overview shows when Google Drive last got a copy');
+  let log = (await adminD('GET', '/admin/backup/log')).data.backups;
+  ok(log.length === 1 && log[0].manual && log[0].server && log[0].drive && log[0].problem === '' && log[0].file === r.data.file, 'The backup history records it and where it went');
+  ok((await (await login(D.base, '9000000001'))('GET', '/admin/backup/log')).status === 403, 'Teachers cannot see the history');
+
+  await fetch(MOCK + '/__drive/fail?on=1');
+  r = await adminD('POST', '/admin/backup');
+  ok(r.status === 502 && r.data.drive === false && /web page/.test(r.data.drive_error), 'A link that answers with a web page is reported as a failure');
+  bk = (await adminD('GET', '/admin/overview')).data.backup;
+  log = (await adminD('GET', '/admin/backup/log')).data.backups;
+  ok(/web page/.test(bk.drive_error) && log[0].server && !log[0].drive && /Google Drive/.test(log[0].problem), 'The overview and the history show the problem; the copy on the server is still made');
+  await fetch(MOCK + '/__drive/fail?on=0');
+  r = await adminD('POST', '/admin/backup');
+  ok(r.data.drive === true && (await adminD('GET', '/admin/overview')).data.backup.drive_error === '', 'The next good upload clears it');
 } finally {
   for (const p of procs) p.kill();
 }

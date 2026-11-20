@@ -57,6 +57,7 @@ Routing is by role on both the client and the API (`/api/admin/*` returns 403 fo
 | `OTP_WEBHOOK_URL` | POSTs `{to, message, code}` to the staff sign-in code gateway of your choice |
 | `COOKIE_SECURE=1` | set behind HTTPS |
 | `AUTO_RESTORE=0` | turns off restoring a missing database from the newest SIS backup |
+| `BACKUP_UPLOAD_URL` | a Google Apps Script web app link that gets a daily copy of the database (base64 of the `.db.gz`, `?app=upmark&file=…`); usually set on the Frappe sync page instead |
 
 ## Keeping UpMark's data (deploys, lost volumes)
 
@@ -69,6 +70,9 @@ tests in progress, approvals, corrections, logs and settings, so it must survive
 2. **Hourly backups.** When something changed, a gzipped snapshot goes to `/data/backups` (48 kept) and to the SIS
    as a private File named `upmark-backup-*.db.gz` (24 kept). *Frappe sync → Back up now / Download a copy* does it on demand.
    An empty database is never sent to the SIS.
+   **Daily copy off-site.** Paste a Google Apps Script web app link on *Frappe sync → Daily copy to Google Drive* and
+   once a day UpMark POSTs the newest snapshot to it (base64 body, `?app=upmark&file=<name>`). *Backup history* on the
+   same page lists every backup and where it went (server, SIS, Google Drive) with any problem.
 3. **Automatic restore.** When UpMark starts and there is no database file, it restores the newest SIS backup first.
 4. **Recovering older databases.** Copy old `rapid.db` files (with their `-wal` files) into `/data/recovered/<name>/`.
    *Frappe sync → Recover older data* lists them and merges one in: teachers, hand-made allocations, tests with

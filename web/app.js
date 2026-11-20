@@ -1424,8 +1424,8 @@ function dbCard(o) {
   const refresh = async () => { S.counts = await api('GET', '/admin/overview'); render(); };
   const now = h('button', { class: 'btn', id: 'backup-now', onclick: async (e) => {
     e.target.disabled = true;
-    try { const r = await api('POST', '/admin/backup'); toast(r.sis ? 'Backed up here and in the SIS' : 'Backed up on the server'); await refresh(); }
-    catch (x) { toast(x.data && x.data.error ? 'Backup saved here, but: ' + x.data.error : x.message, true); e.target.disabled = false; }
+    try { const r = await api('POST', '/admin/backup'); toast('Backed up on the server' + (r.sis ? ', in the SIS' : '') + (r.drive ? ' and in Google Drive' : '')); await refresh(); }
+    catch (x) { const d = x.data || {}; toast(d.error || d.drive_error ? 'Backup saved here, but: ' + [d.error, d.drive_error].filter(Boolean).join(' ') : x.message, true); await refresh(); }
   } }, 'Back up now');
   const dl = h('button', { class: 'btn ghost', onclick: async () => {
     const res = await fetch('/api/admin/backup/download', { headers: { 'X-Requested-With': 'rea' }, credentials: 'same-origin' });
@@ -1440,8 +1440,34 @@ function dbCard(o) {
       'Started on ', h('b', {}, o.db_created_at ? fmtTs(o.db_created_at) : 'unknown'), '. ', o.storage && o.storage.ok ? o.storage.detail.replace(/\.?$/, '.') : '', h('br'),
       'Last backup: ', h('b', {}, b.last ? fmtTs(b.last) : 'not yet'), b.local_count ? ' · ' + b.local_count + ' kept on the server' : '',
       b.sis ? [' · in the SIS: ', h('b', {}, b.last_sis ? fmtTs(b.last_sis) : 'not yet')] : ' · the SIS is not connected', h('br'),
-      'Backed up every hour when something changes. If the database is ever lost, UpMark restores the newest SIS copy on its own when it starts.'),
-    h('div', { class: 'row', style: 'gap:10px' }, now, dl));
+      'Backed up every hour when something changes, and once a day to Google Drive. If the database is ever lost, UpMark restores the newest SIS copy on its own when it starts.'),
+    h('div', { class: 'row', style: 'gap:10px' }, now, dl), driveBox(b, refresh), backupLog());
+}
+// The daily copy goes to a Google Apps Script upload link that saves it to Drive.
+function driveBox(b, refresh) {
+  const inp = h('input', { placeholder: 'https://script.google.com/macros/s/…/exec', id: 'drive-url', style: 'flex:1;min-width:240px' });
+  const save = (url) => async (e) => { e.target.disabled = true; try { await api('PUT', '/admin/backup/drive', { url }); toast(url ? 'Daily Google Drive backup is on' : 'Google Drive backup turned off'); await refresh(); } catch (x) { toast(x.message, true); e.target.disabled = false; } };
+  return h('div', { style: 'margin-top:16px;padding-top:14px;border-top:1px solid var(--line)' }, h('b', {}, 'Daily copy to Google Drive'),
+    b.drive_error && h('div', { class: 'banner bad', style: 'margin-top:8px' }, 'Last Google Drive upload failed: ' + b.drive_error),
+    b.drive
+      ? h('div', { class: 'row sp', style: 'margin-top:6px;gap:10px' }, h('div', { class: 'small mute' }, 'Sent to ', h('code', {}, b.drive_link), h('br'), 'Last copy: ', h('b', {}, b.last_drive ? fmtTs(b.last_drive) : 'not yet'), ' · the next one goes within a day of it'),
+          h('button', { class: 'btn sm ghost', onclick: save('') }, 'Turn off'))
+      : h('div', { style: 'margin-top:6px' }, h('div', { class: 'small mute', style: 'margin-bottom:8px' }, 'Paste the Apps Script web app link. Once a day UpMark sends it the latest backup.'),
+          h('div', { class: 'row', style: 'gap:10px' }, inp, h('button', { class: 'btn sm', onclick: (e) => save(inp.value)(e) }, 'Save link'))));
+}
+// Every backup UpMark made, newest first, and where each copy went.
+function backupLog() {
+  const box = h('div', { id: 'backup-log', style: 'margin-top:16px;padding-top:14px;border-top:1px solid var(--line)' }, h('b', {}, 'Backup history'));
+  api('GET', '/admin/backup/log').then((d) => {
+    if (!d.backups.length) return box.append(h('div', { class: 'small mute', style: 'margin-top:6px' }, 'No backups yet.'));
+    const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+    const where = (r) => [r.server && 'server', r.sis && 'SIS', r.drive && 'Google Drive'].filter(Boolean).join(' · ') || 'nowhere';
+    box.append(h('div', { class: 'tscroll', style: 'margin-top:8px' }, h('table', { class: 'tbl' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Saved to'), h('th', {}, 'Size'), h('th', {}, ''))),
+      h('tbody', {}, d.backups.map((r) => h('tr', {}, h('td', {}, fmtTs(r.at), r.manual && h('span', { class: 'small mute' }, ' · by hand')), h('td', {}, where(r)), h('td', {}, kb(r.bytes)),
+        h('td', {}, r.problem ? h('span', { class: 'badge s-attn', title: r.problem }, 'problem') : h('span', { class: 'badge s-done' }, 'ok'))))))));
+  }).catch(() => {});
+  return box;
 }
 // drawRecovery lists older databases copied into <data>/recovered and merges one on request.
 const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');

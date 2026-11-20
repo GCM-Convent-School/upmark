@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestClassifyMount(t *testing.T) {
 	base := "100 90 0:50 / / rw,relatime master:1 - overlay overlay rw\n" +
@@ -38,6 +41,29 @@ func TestFreeSlot(t *testing.T) {
 	} {
 		if f, to := freeSlot(c.busy); f != c.from || to != c.to {
 			t.Errorf("busy %v: got %s-%s want %s-%s", c.busy, f, to, c.from, c.to)
+		}
+	}
+}
+
+func TestDriveDue(t *testing.T) {
+	now := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	for _, c := range []struct {
+		last string
+		due  bool
+	}{{"", true}, {"garbage", true}, {at(2 * time.Hour), false}, {at(23 * time.Hour), false}, {at(23*time.Hour + 56*time.Minute), true}, {at(30 * time.Hour), true}} {
+		if got := driveDueAt(c.last, now); got != c.due {
+			t.Errorf("last %q: due=%v want %v", c.last, got, c.due)
+		}
+	}
+	for s, ok := range map[string]bool{
+		"https://script.google.com/macros/s/AKfy123/exec": true,
+		"http://script.google.com/macros/s/AKfy123/exec":  false,
+		"https://evil.test/macros/s/AKfy123/exec":         false,
+		"https://script.google.com/macros/s/AKfy123/dev":  false,
+	} {
+		if validDriveURL(s) != ok {
+			t.Errorf("validDriveURL(%q) want %v", s, ok)
 		}
 	}
 }

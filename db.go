@@ -82,6 +82,10 @@ CREATE TABLE IF NOT EXISTS notifications(
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, id);
 CREATE TABLE IF NOT EXISTS parent_sessions(
   token_hash TEXT PRIMARY KEY, student_id INTEGER NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS backup_log(
+  id INTEGER PRIMARY KEY, at TEXT NOT NULL, file TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0,
+  manual INTEGER NOT NULL DEFAULT 0, server INTEGER NOT NULL DEFAULT 0, sis INTEGER NOT NULL DEFAULT 0,
+  drive INTEGER NOT NULL DEFAULT 0, problem TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS weekly_reports(
   class_name TEXT NOT NULL, section TEXT NOT NULL DEFAULT '', week TEXT NOT NULL, published_at TEXT NOT NULL,
   PRIMARY KEY(class_name, section, week));

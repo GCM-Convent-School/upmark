@@ -81,17 +81,22 @@ func (a *App) fingerprint() string {
 }
 
 type backupResult struct {
-	File    string `json:"file"`
-	Bytes   int    `json:"bytes"`
-	SIS     bool   `json:"sis"`
-	Skipped bool   `json:"skipped"`
-	Error   string `json:"error,omitempty"`
+	File       string `json:"file"`
+	Bytes      int    `json:"bytes"`
+	SIS        bool   `json:"sis"`
+	Drive      bool   `json:"drive"`
+	Skipped    bool   `json:"skipped"`
+	Error      string `json:"error,omitempty"`
+	DriveError string `json:"drive_error,omitempty"`
 }
 
-// backup writes one snapshot. force=false skips it when nothing changed since the last one.
+// backup writes one snapshot. force=false skips it when nothing changed since the last one, unless the
+// daily copy to the Google upload link is due.
 func (a *App) backup(force bool) backupResult {
 	fp := a.fingerprint()
-	if !force && fp == a.setting("backup_fingerprint") {
+	changed := force || fp != a.setting("backup_fingerprint")
+	driveDue := a.driveURL() != "" && (force || a.driveDue())
+	if !changed && !driveDue {
 		return backupResult{Skipped: true}
 	}
 	data, err := a.snapshot()
@@ -101,33 +106,52 @@ func (a *App) backup(force bool) backupResult {
 	}
 	name := backupPrefix + time.Now().UTC().Format("20060102-150405") + ".db.gz"
 	res := backupResult{File: name, Bytes: len(data)}
-	dir := backupDir(a.cfg.DBPath)
-	if err := os.WriteFile(filepath.Join(dir, name), data, 0o640); err != nil {
-		res.Error = err.Error()
-	}
-	pruneLocal(dir, keepLocal)
-	a.setSetting("backup_last", nowStr())
-	a.setSetting("backup_last_file", name)
-	// a database with nothing in it yet is never sent to the SIS: it would become the newest copy
+	// a database with nothing in it yet is never sent away: it would become the newest copy
 	// and a later restore would bring back an empty UpMark
 	var users, exams int
 	a.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&users)
 	a.db.QueryRow(`SELECT COUNT(*) FROM exams`).Scan(&exams)
-	if a.frappe.Enabled() && users <= 1 && exams == 0 {
-		res.Error = strings.TrimSpace(res.Error + " Not sent to the SIS: there is nothing in the database yet.")
-	} else if a.frappe.Enabled() {
-		if err := a.frappe.Upload(name, data); err != nil {
-			res.Error = strings.TrimSpace(res.Error + " SIS: " + err.Error())
+	empty := users <= 1 && exams == 0
+	server := false
+	if changed {
+		dir := backupDir(a.cfg.DBPath)
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o640); err != nil {
+			res.Error = err.Error()
 		} else {
-			res.SIS = true
-			a.setSetting("backup_last_sis", nowStr())
-			a.frappe.pruneBackups(keepSIS)
+			server = true
+		}
+		pruneLocal(dir, keepLocal)
+		a.setSetting("backup_last", nowStr())
+		a.setSetting("backup_last_file", name)
+		if a.frappe.Enabled() && empty {
+			res.Error = strings.TrimSpace(res.Error + " Not sent to the SIS: there is nothing in the database yet.")
+		} else if a.frappe.Enabled() {
+			if err := a.frappe.Upload(name, data); err != nil {
+				res.Error = strings.TrimSpace(res.Error + " SIS: " + err.Error())
+			} else {
+				res.SIS = true
+				a.setSetting("backup_last_sis", nowStr())
+				a.frappe.pruneBackups(keepSIS)
+			}
+		}
+		a.setSetting("backup_error", res.Error)
+		if res.Error == "" {
+			a.setSetting("backup_fingerprint", fp)
 		}
 	}
-	a.setSetting("backup_error", res.Error)
-	if res.Error == "" {
-		a.setSetting("backup_fingerprint", fp)
+	if driveDue {
+		if empty {
+			res.DriveError = "Not sent to Google Drive: there is nothing in the database yet."
+		} else if e := a.sendDrive(name, data); e != "" {
+			res.DriveError = e
+		} else {
+			res.Drive = true
+		}
 	}
+	// the backup history on the Frappe sync page
+	a.db.Exec(`INSERT INTO backup_log(at,file,bytes,manual,server,sis,drive,problem) VALUES(?,?,?,?,?,?,?,?)`,
+		nowStr(), name, len(data), b2i(force), b2i(server), b2i(res.SIS), b2i(res.Drive), strings.TrimSpace(res.Error+" "+res.DriveError))
+	a.db.Exec(`DELETE FROM backup_log WHERE id NOT IN (SELECT id FROM backup_log ORDER BY id DESC LIMIT 500)`)
 	return res
 }
 
@@ -150,8 +174,12 @@ func (a *App) backupScheduler(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if r := a.backup(false); r.Error != "" {
+		r := a.backup(false)
+		if r.Error != "" {
 			log.Printf("backup: %s", r.Error)
+		}
+		if r.DriveError != "" {
+			log.Printf("backup: %s", r.DriveError)
 		}
 		t.Reset(backupInterval)
 	}
@@ -282,10 +310,46 @@ func (a *App) backupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/backup", a.wrap("admin", func(w http.ResponseWriter, r *http.Request, u *User) error {
 		res := a.backup(true)
 		code := 200
-		if res.Error != "" {
+		if res.Error != "" || res.DriveError != "" {
 			code = 502
 		}
 		writeJSON(w, code, res)
+		return nil
+	}))
+	mux.HandleFunc("GET /api/admin/backup/log", a.wrap("admin", func(w http.ResponseWriter, r *http.Request, u *User) error {
+		rows, err := a.db.Query(`SELECT at,file,bytes,manual,server,sis,drive,problem FROM backup_log ORDER BY id DESC LIMIT 60`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var at, file, problem string
+			var bytes, manual, server, sis, drive int
+			rows.Scan(&at, &file, &bytes, &manual, &server, &sis, &drive, &problem)
+			out = append(out, map[string]any{"at": at, "file": file, "bytes": bytes, "manual": manual == 1, "server": server == 1, "sis": sis == 1, "drive": drive == 1, "problem": problem})
+		}
+		writeJSON(w, 200, map[string]any{"backups": out})
+		return nil
+	}))
+	// the Google upload link for the daily copy ("" turns it off)
+	mux.HandleFunc("PUT /api/admin/backup/drive", a.wrap("admin", func(w http.ResponseWriter, r *http.Request, u *User) error {
+		var in struct {
+			URL string `json:"url"`
+		}
+		if err := decode(r, &in); err != nil {
+			return err
+		}
+		in.URL = strings.TrimSpace(in.URL)
+		if in.URL != "" && !validDriveURL(in.URL) {
+			return bad("Use the web app link from Apps Script: https://script.google.com/macros/s/…/exec")
+		}
+		if in.URL == "" {
+			in.URL = "off"
+		}
+		a.setSetting("backup_drive_url", in.URL)
+		a.setSetting("backup_drive_error", "")
+		writeJSON(w, 200, map[string]any{"ok": true})
 		return nil
 	}))
 	mux.HandleFunc("GET /api/admin/backup/download", a.wrap("admin", func(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -307,5 +371,16 @@ func (a *App) backupStatus() map[string]any {
 	}
 	return map[string]any{"last": a.setting("backup_last"), "last_sis": a.setting("backup_last_sis"), "file": a.setting("backup_last_file"),
 		"error": a.setting("backup_error"), "local_count": n, "restored_from": a.setting("restored_from"), "restored_at": a.setting("restored_at"),
-		"sis": a.frappe.Enabled()}
+		"sis": a.frappe.Enabled(), "drive": a.driveURL() != "", "drive_link": maskLink(a.driveURL()), "last_drive": a.setting("backup_last_drive"),
+		"drive_error": a.setting("backup_drive_error")}
+}
+
+// maskLink shows enough of the upload link to recognise it without handing out the whole of it.
+func maskLink(s string) string {
+	i := strings.Index(s, "/macros/s/")
+	if i < 0 || len(s) < i+20 {
+		return s
+	}
+	id := s[i+10:]
+	return s[:i+10] + id[:6] + "…" + id[len(id)-10:]
 }

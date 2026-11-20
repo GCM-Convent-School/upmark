@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,9 @@ type mockFrappe struct {
 	seq   map[string]int
 	files map[string][]byte // private file contents by file_url
 	down  bool
+	// a stand-in for the Google Apps Script backup upload link
+	drive     []map[string]any
+	driveFail bool
 }
 
 func newMock() *mockFrappe {
@@ -134,6 +138,28 @@ func (m *mockFrappe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g["students"] = append(kids, map[string]any{"student": in.ID, "student_name": in.Name, "group_roll_number": in.Roll, "active": 1})
 		m.put("Student", frappeDoc{"name": in.ID, "student_name": in.Name, "admission_number": in.Admission})
 		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	case p == "/__drive/exec" && r.Method == "POST": // Apps Script: store it, then redirect to the result page
+		raw, _ := io.ReadAll(r.Body)
+		if m.driveFail {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte("<!DOCTYPE html><html><body>Sorry, unable to open the file at this time.</body></html>"))
+			return
+		}
+		gz, err := base64.StdEncoding.DecodeString(string(raw))
+		m.drive = append(m.drive, map[string]any{"app": r.URL.Query().Get("app"), "file": r.URL.Query().Get("file"), "bytes": len(gz), "decoded": err == nil,
+			"gzip": len(gz) > 2 && gz[0] == 0x1f && gz[1] == 0x8b, "content_type": r.Header.Get("Content-Type")})
+		http.Redirect(w, r, "/__drive/echo", http.StatusFound)
+		return
+	case p == "/__drive/echo" && r.Method == "GET":
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	case p == "/__drive/files":
+		writeJSON(w, 200, m.drive)
+		return
+	case p == "/__drive/fail":
+		m.driveFail = r.URL.Query().Get("on") == "1"
+		writeJSON(w, 200, map[string]any{"fail": m.driveFail})
 		return
 	case p == "/__dump":
 		dt := r.URL.Query().Get("doctype")
