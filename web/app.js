@@ -568,8 +568,8 @@ function partsTotal(e, comps) {
   const max = comps.reduce((a, c) => a + c.max, 0);
   return { sum, max, filled, all: filled === comps.length, bad, text: fmtMark(sum) };
 }
-// next fraction for the keypad's fraction key: .5 -> .25 -> .75 -> .5
-const nextFrac = (v) => ({ 5: '25', 25: '75', 75: '5' })[(v || '').split('.')[1]] || '5';
+// next fraction for the keypad's fraction key, in order: .25 -> .5 -> .75 -> back to .25
+const nextFrac = (v) => ({ 25: '5', 5: '75', 75: '25' })[(v || '').split('.')[1]] || '25';
 let autosaveT = null, wsKeys = null;
 async function openExam(id, opts = {}) {
   try {
@@ -771,7 +771,7 @@ function renderCard() {
   const last = W.af >= fields.length - 1;
   const nxt = stById(ids[W.idx + 1]);
   fill(pad, h('div', { class: 'pad' },
-    h('div', { class: 'grid' }, ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => key(d, () => typeKey(d))), key('.' + nextFrac(entry(s.id, fields[W.af].subj).comps[fields[W.af].ci]), () => typeKey('frac'), 'Fraction: tap again for .25 or .75'), key('0', () => typeKey('0')), key('⌫', () => typeKey('⌫'), 'Delete')),
+    h('div', { class: 'grid' }, ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => key(d, () => typeKey(d))), key('.' + nextFrac(entry(s.id, fields[W.af].subj).comps[fields[W.af].ci]), () => typeKey('frac'), 'Fraction: tap for .25, again for .5, again for .75'), key('0', () => typeKey('0')), key('⌫', () => typeKey('⌫'), 'Delete')),
     h('div', { class: 'next' }, h('button', { class: 'btn ghost', 'aria-label': 'Previous student', onclick: () => stepCard(-1) }, icon('back')),
       h('button', { class: 'btn', id: 'nextbtn', onclick: advance }, last ? (nxt ? 'Next · Roll ' + nxt.roll_no : 'Finish') : 'Next part'))));
 }

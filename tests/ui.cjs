@@ -53,11 +53,11 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
 
   console.log('Card entry');
   const key = (k) => page.click('.pad button.k:text-is("' + k + '")');
-  await key('1'); await key('4'); await key('.5');
-  ok((await page.locator('.sc .box').first().innerText()) === '14.5', '1, 4, .5 shows 14.5');
-  await key('.25'); ok((await page.locator('.sc .box').first().innerText()) === '14.25', 'Tapping the fraction key again gives 14.25');
+  await key('1'); await key('4'); await key('.25');
+  ok((await page.locator('.sc .box').first().innerText()) === '14.25', '1, 4, fraction key shows 14.25');
+  await key('.5'); ok((await page.locator('.sc .box').first().innerText()) === '14.5', 'Tapping the fraction key again gives 14.5');
   await key('.75'); ok((await page.locator('.sc .box').first().innerText()) === '14.75', 'And again gives 14.75');
-  await key('.5'); ok((await page.locator('.sc .box').first().innerText()) === '14.5', 'And back to 14.5');
+  await key('.25'); await key('.5'); ok((await page.locator('.sc .box').first().innerText()) === '14.5', 'It wraps round to .25, then .5');
   await shot(page, 't4-card');
   await page.click('#nextbtn');
   await key('2'); await key('5');
