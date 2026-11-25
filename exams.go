@@ -362,7 +362,7 @@ func (a *App) entriesFor(examID int64) ([]Entry, error) {
 
 // ---------- validation ----------
 
-// validateEntry enforces the sanity gate (0 <= score <= max, 0.5 increments) and computes the total.
+// validateEntry enforces the sanity gate (0 <= score <= max, 0.25 increments) and computes the total.
 func validateEntry(comps []Component, status string, in []*float64) (out []*float64, total *float64, complete bool, err error) {
 	out = make([]*float64, len(comps))
 	if status != "" && status != "AB" && status != "EX" {
@@ -389,8 +389,8 @@ func validateEntry(comps []Component, status string, in []*float64) (out []*floa
 			return nil, nil, false, fmt.Errorf("%s: score cannot be below 0", comps[i].Name)
 		case f > comps[i].Max:
 			return nil, nil, false, fmt.Errorf("%s: score %s exceeds maximum %s", comps[i].Name, fmtNum(f), fmtNum(comps[i].Max))
-		case !isHalf(f):
-			return nil, nil, false, fmt.Errorf("%s: marks must be in steps of 0.5", comps[i].Name)
+		case !isQuarter(f):
+			return nil, nil, false, fmt.Errorf("%s: marks must be whole, .25, .5 or .75", comps[i].Name)
 		}
 		c := f
 		out[i] = &c

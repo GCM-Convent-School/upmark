@@ -65,7 +65,10 @@ const put = (sid, comps, status = '') => A('PUT', '/exams/' + split + '/marks', 
 ok((await put(roster[0].id, [81, 5])).status === 422, 'API rejects 81 in Theory');
 ok((await put(roster[0].id, [50, -1])).status === 422, 'API rejects -1 in Practical');
 ok((await put(roster[0].id, [50, 14.3])).status === 422, 'API rejects 14.3');
-ok((await put(roster[0].id, [50, 14.25])).status === 422, 'API rejects 14.25');
+ok((await put(roster[0].id, [50, 14.2])).status === 422, 'API rejects 14.2');
+ok((await put(roster[0].id, [50, 14.25])).status === 200, 'API accepts 14.25');
+ok((await A('GET', '/exams/' + split)).data.entries[0].total === 64.25, 'Total auto-computed as 64.25');
+ok((await put(roster[0].id, [50.75, 14])).status === 200, 'API accepts 50.75');
 ok((await put(roster[0].id, [50, 21])).status === 422, 'API rejects 21 in Practical (max 20)');
 ok((await put(roster[0].id, [50, 14.5])).status === 200, 'API accepts 14.5');
 ex = (await A('GET', '/exams/' + split)).data;

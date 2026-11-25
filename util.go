@@ -61,6 +61,9 @@ func decode(r *http.Request, v any) error {
 
 func isHalf(v float64) bool { return math.Abs(v*2-math.Round(v*2)) < 1e-9 }
 
+// isQuarter: scores may be entered in steps of 0.25 (x, x.25, x.5, x.75).
+func isQuarter(v float64) bool { return math.Abs(v*4-math.Round(v*4)) < 1e-9 }
+
 var sectionRe = regexp.MustCompile(`^(.+?)\s*[-–/ ]\s*([A-Za-z])$`)
 
 // splitGroup derives (class, section) from a Frappe Student Group name such as "Grade 10-A".

@@ -555,11 +555,21 @@ const keyOf = (sid, subj) => sid + '|' + subj;
 function checkField(str, max) {
   if (str === '' || str == null) return { empty: true, ok: true };
   if (/^-/.test(str)) return { ok: false, msg: 'Marks cannot be negative' };
-  if (!/^\d+\.?$|^\d+\.[05]$/.test(str)) return { ok: false, msg: 'Use whole or .5 marks only' };
+  if (!/^\d+\.?$|^\d+\.(0|00|5|50|25|75)$/.test(str)) return { ok: false, msg: 'Use whole, .25, .5 or .75 marks only' };
   const v = parseFloat(str);
   if (v > max) return { ok: false, msg: 'Maximum is ' + max };
   return { ok: true, v };
 }
+// running total of one subject's parts while the teacher types; only valid parts count.
+const fmtMark = (n) => String(+n.toFixed(2));
+function partsTotal(e, comps) {
+  let sum = 0, filled = 0, bad = false;
+  comps.forEach((c, i) => { const k = checkField(e.comps[i], c.max); if (!k.ok) bad = true; else if (!k.empty) { sum += k.v; filled++; } });
+  const max = comps.reduce((a, c) => a + c.max, 0);
+  return { sum, max, filled, all: filled === comps.length, bad, text: fmtMark(sum) };
+}
+// next fraction for the keypad's fraction key: .5 -> .25 -> .75 -> .5
+const nextFrac = (v) => ({ 5: '25', 25: '75', 75: '5' })[(v || '').split('.')[1]] || '5';
 let autosaveT = null, wsKeys = null;
 async function openExam(id, opts = {}) {
   try {
@@ -692,7 +702,7 @@ function workspaceKeys(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const s = stById(W.listIds[W.idx]); if (!s) return;
   if (/^[0-9]$/.test(e.key)) { e.preventDefault(); typeKey(e.key); }
-  else if (e.key === '.') { e.preventDefault(); typeKey('.5'); }
+  else if (e.key === '.') { e.preventDefault(); typeKey('frac'); }
   else if (e.key === 'Backspace') { e.preventDefault(); typeKey('⌫'); }
   else if (e.key === 'Enter') { e.preventDefault(); advance(); }
   else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); setStatus(s.id, 'AB', true); }
@@ -742,6 +752,13 @@ function renderCard() {
         e.status ? e.status : (val === '' ? '–' : val)), h('span', { class: 'den' }, '/' + f.comp.max)),
       !chk.ok && h('div', { class: 'err-msg' }, chk.msg));
   });
+  if (W.exam.split) for (const sub of scopeSubjects()) {
+    const e = entry(s.id, sub); if (e.status) continue;
+    const t = partsTotal(e, W.exam.components);
+    rows.push(h('div', { class: 'ptot' + (t.all && !t.bad ? ' done' : ''), 'aria-live': 'polite' },
+      h('span', { class: 'lbl' }, (W.exam.combined ? sub + ' · ' : '') + 'Total'), h('b', {}, t.filled ? t.text : '–'), h('span', { class: 'den' }, '/' + fmtMark(t.max)),
+      !t.all && t.filled > 0 && h('span', { class: 'mute small' }, t.filled + ' of ' + W.exam.components.length + ' parts')));
+  }
   const card = h('div', { class: 'sc' + dim + (full ? ' full' : '') + (single ? '' : ' multi') },
     shape('burst', 260, 'var(--butter)', '', 'burst'),
     h('div', { class: 'roll', style: 'position:relative' }, 'Roll ' + s.roll_no + ' · Adm. ' + s.admission_no + ' · ' + (W.idx + 1) + ' of ' + ids.length), h('div', { class: 'nm' }, s.name),
@@ -754,7 +771,7 @@ function renderCard() {
   const last = W.af >= fields.length - 1;
   const nxt = stById(ids[W.idx + 1]);
   fill(pad, h('div', { class: 'pad' },
-    h('div', { class: 'grid' }, ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => key(d, () => typeKey(d))), key('.5', () => typeKey('.5'), 'Half mark'), key('0', () => typeKey('0')), key('⌫', () => typeKey('⌫'), 'Delete')),
+    h('div', { class: 'grid' }, ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => key(d, () => typeKey(d))), key('.' + nextFrac(entry(s.id, fields[W.af].subj).comps[fields[W.af].ci]), () => typeKey('frac'), 'Fraction: tap again for .25 or .75'), key('0', () => typeKey('0')), key('⌫', () => typeKey('⌫'), 'Delete')),
     h('div', { class: 'next' }, h('button', { class: 'btn ghost', 'aria-label': 'Previous student', onclick: () => stepCard(-1) }, icon('back')),
       h('button', { class: 'btn', id: 'nextbtn', onclick: advance }, last ? (nxt ? 'Next · Roll ' + nxt.roll_no : 'Finish') : 'Next part'))));
 }
@@ -764,8 +781,8 @@ function typeKey(k) {
   const f = fieldsFor()[W.af]; const e = entry(s.id, f.subj);
   if (e.status) { e.status = ''; }
   let v = e.comps[f.ci];
-  if (k === '⌫') v = v.slice(0, -1);
-  else if (k === '.5') { if (v.includes('.')) return; v = (v || '0') + '.5'; }
+  if (k === '⌫') v = v.includes('.') ? v.split('.')[0] : v.slice(0, -1);
+  else if (k === 'frac') v = (v.split('.')[0] || '0') + '.' + nextFrac(v);
   else { if (v.length >= 6 || v.includes('.')) return; v = v === '0' ? k : v + k; }
   e.comps[f.ci] = v; touch(s.id, f.subj); renderCard();
 }
@@ -850,7 +867,8 @@ function renderTable() {
   const body = document.getElementById('body'), pad = document.getElementById('pad'); fill(pad);
   const subs = scopeSubjects(), comps = W.exam.components;
   const head = h('tr', {}, h('th', {}, 'Roll'), h('th', {}, 'Adm.'), h('th', {}, 'Student'),
-    subs.flatMap((s) => comps.map((c) => h('th', {}, [W.exam.combined ? s : '', W.exam.split ? c.name : (W.exam.combined ? '' : 'Mark')].filter(Boolean).join(' · '), ' /' + c.max))), h('th', {}, W.locked ? '' : 'Status'));
+    subs.flatMap((s) => [...comps.map((c) => h('th', {}, [W.exam.combined ? s : '', W.exam.split ? c.name : (W.exam.combined ? '' : 'Mark')].filter(Boolean).join(' · '), ' /' + c.max)),
+      W.exam.split && h('th', { class: 'tot' }, (W.exam.combined ? s + ' · ' : '') + 'Total /' + fmtMark(comps.reduce((a, c) => a + c.max, 0)))]), h('th', {}, W.locked ? '' : 'Status'));
   const rows = W.listIds.map((id) => tableRow(stById(id)));
   fill(body, quickTypeBar(),
     !W.locked && h('div', { class: 'kbd' }, h('span', {}, h('kbd', {}, '↵'), ' or ', h('kbd', {}, '↓'), ' next row'), h('span', {}, h('kbd', {}, '←'), ' ', h('kbd', {}, '→'), ' parts'), h('span', {}, 'type ', h('kbd', {}, 'ab'), ' or ', h('kbd', {}, 'ex'), ' in a cell')),
@@ -862,17 +880,22 @@ function tableRow(s) {
   const dimmed = subs.every((x) => entry(s.id, x).status);
   const tr = h('tr', { 'data-sid': s.id, class: (dimmed ? 'dim ' : '') + (W.missing.has(s.id) ? 'miss ' : '') + (W.locked ? 'click' : '') });
   const cells = [h('td', {}, h('b', {}, s.roll_no)), h('td', { class: 'mute' }, s.admission_no), h('td', {}, h('b', {}, s.name), subs.some((x) => W.pending.has(keyOf(s.id, x))) && h('span', { class: 'badge s-wait', style: 'margin-left:6px' }, 'Correction requested'))];
-  for (const sub of subs) comps.forEach((c, ci) => {
+  for (const sub of subs) {
+  const totCell = W.exam.split && h('td', { class: 'tot' });
+  const showTot = () => { if (!totCell) return; const e = entry(s.id, sub), t = partsTotal(e, comps); totCell.className = 'tot' + (t.all && !t.bad ? ' done' : ''); totCell.textContent = e.status ? '' : t.filled ? t.text : '–'; };
+  comps.forEach((c, ci) => {
     const e = entry(s.id, sub), chk = checkField(e.comps[ci], c.max);
     const inp = h('input', { class: 'sc-in' + (chk.ok ? '' : ' bad'), value: e.status || e.comps[ci], disabled: W.locked, readOnly: !!e.status, inputmode: 'decimal', 'data-col': subs.indexOf(sub) * comps.length + ci, 'aria-label': s.name + ' ' + sub + ' ' + c.name, autocomplete: 'off',
       oninput: (ev) => {
         const v = ev.target.value.trim();
         if (/^(ab|ex)$/i.test(v)) { setStatusRow(s, v.toUpperCase(), tr); return; }
-        e.comps[ci] = v; const k = checkField(v, c.max); ev.target.classList.toggle('bad', !k.ok); ev.target.title = k.msg || ''; touch(s.id, sub);
+        e.comps[ci] = v; const k = checkField(v, c.max); ev.target.classList.toggle('bad', !k.ok); ev.target.title = k.msg || ''; touch(s.id, sub); showTot();
       },
       onkeydown: (ev) => { if (e.status && (ev.key === 'Backspace' || ev.key === 'Delete')) { ev.preventDefault(); setStatusRow(s, e.status, tr); return; } tableNav(ev, inp); } });
     cells.push(h('td', {}, inp));
   });
+  if (totCell) { showTot(); cells.push(totCell); }
+  }
   cells.push(h('td', {}, W.locked ? null : ['AB', 'EX'].map((st) => h('button', { class: 'st' + (subs.every((x) => entry(s.id, x).status === st) ? ' on' : ''), onclick: () => setStatusRow(s, st, tr) }, st))));
   tr.append(...cells);
   if (W.locked) tr.addEventListener('click', () => correctionModal(s));
@@ -984,19 +1007,22 @@ function correctionModal(s) {
   let subj = subs[0], status = '';
   const body = h('div'), err = h('div', { class: 'err-msg' });
   let vals = [];
+  const newTot = h('div', { class: 'mute small', 'aria-live': 'polite' });
+  const showNewTot = () => { if (!W.exam.split || status) return fill(newTot); const t = partsTotal({ comps: vals }, W.exam.components); fill(newTot, t.filled ? 'New total: ' + t.text + ' / ' + fmtMark(t.max) + (t.all ? '' : ' (' + t.filled + ' of ' + vals.length + ' parts)') : ''); };
   const reason = h('textarea', { rows: 3, placeholder: admin ? 'Reason (kept in the history)' : 'What happened? e.g. a question was not added', maxLength: 1000 });
   const draw = () => {
     const cur = entry(s.id, subj), comps = W.exam.components;
     vals = comps.map(() => '');
     const inputs = comps.map((c, i) => h('div', {}, h('label', { class: 'f', for: 'cm' + i }, (W.exam.split ? c.name : 'New mark') + ' (out of ' + c.max + ')'),
-      h('input', { id: 'cm' + i, inputmode: 'decimal', placeholder: 'out of ' + c.max, value: vals[i], disabled: !!status, oninput: (e) => { vals[i] = e.target.value.trim(); const k = checkField(vals[i], c.max); e.target.classList.toggle('bad', !k.ok); err.textContent = k.msg || ''; } })));
+      h('input', { id: 'cm' + i, inputmode: 'decimal', placeholder: 'out of ' + c.max, value: vals[i], disabled: !!status, oninput: (e) => { vals[i] = e.target.value.trim(); const k = checkField(vals[i], c.max); e.target.classList.toggle('bad', !k.ok); err.textContent = k.msg || ''; showNewTot(); } })));
     fill(body,
       h('p', {}, h('b', {}, 'Roll ' + s.roll_no + ' · ' + s.name)),
       W.pending.has(keyOf(s.id, subj)) && h('div', { class: 'banner wait' }, 'A correction for this student is already waiting for the admin.'),
       subs.length > 1 && h('div', { class: 'pills' }, subs.map((x) => h('button', { class: 'pill sm' + (x === subj ? ' on' : ''), onclick: () => { subj = x; draw(); } }, x))),
-      h('label', { class: 'f' }, 'Current mark'), h('div', { class: 'cur-mark' }, h('b', {}, cur.status || cur.comps.join(' + ') + (cur.comps.length > 1 ? ' = ' + cur.comps.reduce((a, b) => a + parseFloat(b || 0), 0) : ''))),
+      h('label', { class: 'f' }, 'Current mark'), h('div', { class: 'cur-mark' }, h('b', {}, cur.status || cur.comps.join(' + ') + (cur.comps.length > 1 ? ' = ' + fmtMark(cur.comps.reduce((a, b) => a + parseFloat(b || 0), 0)) : ''))),
       h('label', { class: 'f' }, 'Change to'), h('div', { class: 'pills', style: 'margin-top:0' }, [['', 'Mark'], ['AB', 'Absent'], ['EX', 'Exempt']].map(([v, l]) => h('button', { class: 'pill sm' + (status === v ? ' on' : ''), onclick: () => { status = v; draw(); } }, l))),
-      inputs, err, h('label', { class: 'f' }, 'Reason'), reason);
+      inputs, newTot, err, h('label', { class: 'f' }, 'Reason'), reason);
+    showNewTot();
   };
   draw();
   const ov = overlay([h('h2', {}, admin ? 'Change a score' : 'Ask for a correction'), !admin && h('p', { class: 'mute small' }, 'The admin approves it before the mark changes.'), body,
