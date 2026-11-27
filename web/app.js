@@ -98,6 +98,7 @@ const ICONS = {
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
   menu: 'M3 6h18M3 12h18M3 18h18',
   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+  printer: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
   layers: 'M12 2l10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5',
   lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
   bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
@@ -651,7 +652,9 @@ function viewWorkspace() {
       h('div', { class: 'p', id: 'prog' })),
     h('div', { class: 'row sp', style: 'margin-top:10px' }, seg,
       h('div', { class: 'row', style: 'gap:6px' },
-        h('button', { class: 'pill sm', onclick: () => showTimeline() }, 'History'),
+        // on a phone History and Print are icons, so the row still fits beside Cards / Table
+        h('button', { class: 'pill sm ib', 'aria-label': 'History', title: 'History', onclick: () => showTimeline() }, h('span', { class: 'lg' }, 'History'), h('span', { class: 'sh' }, icon('clock'))),
+        h('button', { class: 'pill sm ib', id: 'printbtn', 'aria-label': 'Print or save as PDF', title: 'Print or save as PDF', onclick: printMarksheet }, h('span', { class: 'lg' }, 'Print / PDF'), h('span', { class: 'sh' }, icon('printer'))),
         W.locked ? null : [
           h('button', { class: 'pill sm', id: 'savebtn', onclick: () => saveDraft(false) }, 'Saved'),
           h('button', { class: 'btn sm', id: 'lockbtn', onclick: finalize }, h('span', { class: 'lg' }, 'Lock & send to admin'), h('span', { class: 'sh' }, 'Lock'))])));
@@ -913,6 +916,199 @@ function tableNav(ev, inp) {
   else if (ev.key === 'ArrowUp') { ev.preventDefault(); go2(tr.previousElementSibling); }
   else if (ev.key === 'ArrowRight' && inp.selectionStart === inp.value.length) { const n = tr.querySelector('input[data-col="' + (+col + 1) + '"]'); if (n) { ev.preventDefault(); n.focus(); n.select(); } }
   else if (ev.key === 'ArrowLeft' && inp.selectionStart === 0) { const n = tr.querySelector('input[data-col="' + (+col - 1) + '"]'); if (n) { ev.preventDefault(); n.focus(); n.select(); } }
+}
+
+// ---- print / save as PDF marksheet ----
+// fullDate: a printed sheet is kept, so its dates carry the year
+const fullDate = (s) => { const [y, m, d] = s.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); };
+async function printMarksheet() {
+  if (!W) return;
+  const prev = document.getElementById('marksheet');
+  if (prev) prev.remove();
+  document.body.classList.remove('printing-sheet', 'sheet-landscape');
+
+  if (W.dirty && W.dirty.size > 0 && navigator.onLine) {
+    try { await saveDraft(true); } catch (_) {}
+  }
+  const hasUnsaved = W.dirty && W.dirty.size > 0;
+
+  const ex = W.exam;
+  let statusText = '';
+  let watermarkText = null;
+  if (!W.locked) {
+    statusText = 'Draft — not yet locked';
+    watermarkText = 'DRAFT';
+  } else if (!ex.approved_at) {
+    statusText = 'Locked — waiting for approval';
+    watermarkText = 'NOT APPROVED';
+  } else {
+    statusText = 'Approved on ' + fullDate(ex.approved_at);
+    watermarkText = null;
+  }
+
+  const comps = ex.components || [];
+  const vis = W.vis || [];
+  const isCombined = vis.length > 1;
+  const numPerSubj = comps.length + (comps.length >= 2 ? 1 : 0);
+  const totalCols = 3 + vis.length * numPerSubj;
+  const compSum = comps.reduce((a, c) => a + c.max, 0);
+  const compHeader = (c) => (comps.length === 1 && !ex.split ? 'Mark /' + c.max : c.name + ' /' + c.max);
+
+  const subjs = vis.join(' + ');
+  const cls = label(ex.class_name, ex.section);
+  const headBlock = h('div', { class: 'ms-head' },
+    h('div', { class: 'rschool' }, 'GCM Convent School'),
+    h('div', { class: 'ms-title' }, 'Marksheet · ' + cls + ' · ' + subjs),
+    h('div', { class: 'ms-meta rinfo' },
+      h('div', {}, h('small', {}, 'Class'), h('b', {}, cls)),
+      h('div', {}, h('small', {}, 'Subject'), h('b', {}, subjs)),
+      h('div', {}, h('small', {}, 'Test'), h('b', {}, ex.sub_type + (ex.category ? ' (' + ex.category + ')' : ''))),
+      ex.topic ? h('div', {}, h('small', {}, 'Topic'), h('b', {}, ex.topic)) : null,
+      h('div', {}, h('small', {}, 'Date'), h('b', {}, ex.date ? fullDate(ex.date) : '—')),
+      h('div', {}, h('small', {}, 'Max marks'), h('b', {}, 'Out of ' + ex.max_total)),
+      h('div', {}, h('small', {}, 'Teacher'), h('b', {}, ex.owner_name || '—'))
+    ),
+    h('div', { class: 'ms-status' },
+      h('small', {}, 'Status: '),
+      h('b', {}, statusText),
+      hasUnsaved ? h('span', { class: 'ms-unsaved' }, ' · Includes marks not yet saved') : null
+    )
+  );
+
+  let thead;
+  if (isCombined) {
+    const r1 = [
+      h('th', { rowspan: 2 }, 'Roll no.'),
+      h('th', { rowspan: 2 }, 'Admission no.'),
+      h('th', { rowspan: 2 }, 'Name')
+    ];
+    const r2 = [];
+    vis.forEach((s) => {
+      r1.push(h('th', { colspan: numPerSubj, class: 'ms-subj-th' }, s));
+      comps.forEach((c) => r2.push(h('th', {}, compHeader(c))));
+      if (comps.length >= 2) r2.push(h('th', { class: 'ms-tot-th' }, 'Total /' + fmtMark(compSum)));
+    });
+    thead = h('thead', {}, h('tr', {}, r1), h('tr', {}, r2));
+  } else {
+    const r1 = [
+      h('th', {}, 'Roll no.'),
+      h('th', {}, 'Admission no.'),
+      h('th', {}, 'Name')
+    ];
+    comps.forEach((c) => r1.push(h('th', {}, compHeader(c))));
+    if (comps.length >= 2) r1.push(h('th', { class: 'ms-tot-th' }, 'Total /' + fmtMark(compSum)));
+    thead = h('thead', {}, h('tr', {}, r1));
+  }
+
+  const students = W.roster.slice().sort((a, b) => a.roll_sort - b.roll_sort || a.name.localeCompare(b.name));
+  const tbody = h('tbody', {}, students.map((s) => {
+    const cells = [
+      h('td', { class: 'ms-c' }, s.roll_no || '—'),
+      h('td', { class: 'ms-c mute' }, s.admission_no || '—'),
+      h('td', { class: 'ms-name' }, s.name)
+    ];
+    for (const sub of vis) {
+      const e = entry(s.id, sub);
+      if (e.status === 'AB' || e.status === 'EX') {
+        comps.forEach(() => cells.push(h('td', { class: 'ms-c ms-st' }, e.status)));
+        if (comps.length >= 2) cells.push(h('td', { class: 'ms-c ms-tot ms-st' }, e.status));
+      } else {
+        comps.forEach((c, ci) => {
+          const v = e.comps && e.comps[ci];
+          if (v === '' || v == null) cells.push(h('td', { class: 'ms-c ms-miss' }, '—'));
+          else { const n = parseFloat(v); cells.push(h('td', { class: 'ms-c' }, isNaN(n) ? v : fmtMark(n))); }
+        });
+        if (comps.length >= 2) {
+          const t = partsTotal(e, comps);
+          cells.push(h('td', { class: 'ms-c ms-tot' }, t.filled > 0 ? t.text : '—'));
+        }
+      }
+    }
+    return h('tr', {}, cells);
+  }));
+
+  const sumHead = h('tr', {},
+    isCombined ? h('th', {}, 'Subject') : null,
+    h('th', {}, 'Marked'),
+    h('th', {}, 'Absent'),
+    h('th', {}, 'Exempt'),
+    h('th', {}, 'Not marked'),
+    h('th', {}, 'Class average'),
+    h('th', {}, 'Highest')
+  );
+
+  const sumRows = vis.map((sub) => {
+    let marked = 0, ab = 0, exm = 0, notMarked = 0;
+    const totals = [];
+    for (const s of W.roster) {
+      const e = entry(s.id, sub);
+      if (e.status === 'AB') { ab++; }
+      else if (e.status === 'EX') { exm++; }
+      else {
+        const t = partsTotal(e, comps);
+        if (t.all && !t.bad && comps.length > 0) {
+          marked++;
+          totals.push(t.sum);
+        } else {
+          notMarked++;
+        }
+      }
+    }
+    const avg = totals.length > 0 ? fmtMark(totals.reduce((a, b) => a + b, 0) / totals.length) : '—';
+    const highest = totals.length > 0 ? fmtMark(Math.max(...totals)) : '—';
+    return h('tr', {},
+      isCombined ? h('td', { class: 'ms-sum-subj' }, h('b', {}, sub)) : null,
+      h('td', {}, marked),
+      h('td', {}, ab),
+      h('td', {}, exm),
+      h('td', {}, notMarked),
+      h('td', {}, avg),
+      h('td', {}, highest)
+    );
+  });
+
+  const summaryBlock = h('div', { class: 'ms-summary' },
+    h('div', { class: 'ms-sum-title' }, 'Class summary' + (isCombined ? ' (by subject)' : '')),
+    h('table', { class: 'ms-sum-tbl' },
+      h('thead', {}, sumHead),
+      h('tbody', {}, sumRows)
+    )
+  );
+
+  const signBlock = h('div', { class: 'rsign ms-sign' },
+    h('div', {}, 'Subject teacher'),
+    h('div', {}, 'Class teacher'),
+    h('div', {}, 'Exam coordinator')
+  );
+
+  const now = new Date();
+  const printedStr = 'Printed ' + now.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const footBlock = h('div', { class: 'ms-foot' }, printedStr);
+
+  const watermarkEl = watermarkText ? h('div', { class: 'ms-watermark' }, watermarkText) : null;
+
+  const sheet = h('div', { id: 'marksheet', class: 'msheet' + (totalCols > 8 ? ' many-cols' : '') },
+    watermarkEl,
+    headBlock,
+    h('table', { class: 'ms-tbl' }, thead, tbody),
+    summaryBlock,
+    signBlock,
+    footBlock
+  );
+
+  document.body.append(sheet);
+  document.body.classList.add('printing-sheet');
+  if (totalCols > 8) document.body.classList.add('sheet-landscape');
+
+  const cleanup = () => {
+    const el = document.getElementById('marksheet');
+    if (el) el.remove();
+    document.body.classList.remove('printing-sheet', 'sheet-landscape');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+
+  window.print();
 }
 
 // ---- save, lock, offline sync ----

@@ -15,6 +15,12 @@ async function signIn(page, ident) {
   await page.waitForSelector('.app');
 }
 const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(document.getElementById('toast').textContent), re.source);
+// printSheet opens the marksheet with the print dialog stubbed out and returns its text (the sheet stays until afterprint)
+async function printSheet(page) {
+  await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+  await page.click('#printbtn'); await page.waitForFunction(() => window.__printed === 1);
+  return page.locator('#marksheet').innerText();
+}
 
 (async () => {
   require('fs').mkdirSync('/tmp/shots', { recursive: true });
@@ -87,6 +93,27 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
   ok((await page.locator('#tbl tbody tr').nth(1).locator('button.st.on').innerText()) === 'EX', 'Typing ex in a cell marks the student exempt');
   await shot(page, 't5-table');
 
+  console.log('Print / PDF marksheet (draft)');
+  ok(await page.locator('#marksheet').isHidden() || await page.locator('#marksheet').count() === 0, 'No marksheet on screen before printing');
+  const sheet = await printSheet(page);
+  const nrows = await page.evaluate(() => document.querySelectorAll('#marksheet .ms-tbl tbody tr').length);
+  ok(nrows === 35, 'Marksheet lists all 35 students: ' + nrows);
+  ok(/GCM Convent School/.test(sheet) && /Hindi/.test(sheet) && /FA2/.test(sheet) && /Ch\. 3 Poems/.test(sheet) && /Out of 20/.test(sheet), 'Header names the school, subject, test, chapter and maximum');
+  ok(/Draft — not yet locked/.test(sheet) && await page.locator('#marksheet .ms-watermark').innerText() === 'DRAFT', 'A draft sheet says so and carries a DRAFT watermark');
+  const cells = (i) => page.evaluate((i) => [...document.querySelectorAll('#marksheet .ms-tbl tbody tr')[i].cells].map((c) => c.textContent), i);
+  const row2 = await cells(1);
+  ok(row2[3] === 'EX', 'Exempt shows as EX on the sheet: ' + row2.join(' | '));
+  ok((await cells(2))[3] === 'AB' && (await cells(0))[3] === '14.5', 'Absent shows as AB and a quarter mark prints as typed');
+  ok(/Class summary/.test(sheet) && /Class average/.test(sheet) && /Subject teacher/.test(sheet), 'Summary and signature lines are on the sheet');
+  ok(!/not yet saved/.test(sheet) && await page.evaluate(() => W.dirty.size) === 0, 'Unsaved marks are saved before printing');
+  await page.emulateMedia({ media: 'print' });
+  ok(await page.locator('#marksheet').isVisible() && await page.locator('.ctx').isHidden() && await page.locator('.tabbar').isHidden(), 'In print only the marksheet shows');
+  await page.pdf({ path: '/tmp/shots/marksheet-draft.pdf', format: 'A4' });
+  await page.emulateMedia({ media: 'screen' });
+  ok(await page.locator('#marksheet').isHidden(), 'The marksheet stays off screen after printing');
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  ok(await page.locator('#marksheet').count() === 0, 'The sheet is removed after the print dialog closes');
+
   console.log('Lock & send to admin');
   await page.click('#lockbtn'); await page.click('.ov button:has-text("Lock & send")');
   await page.waitForSelector('.banner.wait:has-text("With admin")');
@@ -110,6 +137,12 @@ const toast = (page, re) => page.waitForFunction((s) => new RegExp(s).test(docum
   await page.click('.ov button:has-text("Send to admin")'); await toast(page, /Correction request sent/);
   await page.waitForSelector('.sc .badge:has-text("Correction requested")');
   ok(true, 'Request is sent and the card shows it is waiting');
+
+  console.log('Print / PDF marksheet (approved)');
+  const asheet = await printSheet(page);
+  ok(/Approved on \d{1,2} \w+ \d{4}|Approved on \w+ \d{1,2}, \d{4}/.test(asheet) && await page.locator('#marksheet .ms-watermark').count() === 0, 'An approved sheet shows the approval date and no watermark');
+  await page.emulateMedia({ media: 'print' }); await page.pdf({ path: '/tmp/shots/marksheet-approved.pdf', format: 'A4' }); await page.emulateMedia({ media: 'screen' });
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
 
   console.log('Offline marking');
   await page.goto(BASE + '/#/dashboard'); await page.waitForSelector('.hero-card');

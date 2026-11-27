@@ -182,6 +182,7 @@ kbd{font-family:inherit;font-size:.72rem;font-weight:var(--w-strong);padding:2px
 body.ws #toast{bottom:calc(330px + env(safe-area-inset-bottom))}
 @media(max-width:600px){
  .lg{display:none}.sh{display:inline}
+ .pill.ib{padding:0 8px}.pill.ib .sh{display:inline-flex}.pill.ib .ic{width:18px;height:18px}
  .ctx{padding:10px 12px 6px}.toolbar{padding:4px 12px 8px;flex-wrap:nowrap;overflow-x:auto;gap:6px}.toolbar input{min-height:38px;min-width:0}.toolbar select{min-height:38px;max-width:100px}.toolbar .pill{white-space:nowrap}
  .deck{padding:0 12px 330px}.sc .nm{font-size:1.9rem}.box{font-size:4.6rem}.multi .box{font-size:2.6rem}
  .pad{padding:8px 10px calc(10px + env(safe-area-inset-bottom))}.pad .grid{gap:6px}.pad button.k{height:50px;font-size:1.45rem}.pad .next .btn{min-height:52px}
@@ -229,6 +230,8 @@ body.ws #toast{bottom:calc(330px + env(safe-area-inset-bottom))}
 .rbars{display:grid;gap:8px;margin:8px 0}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:10px;align-items:center;font-size:13px}
 .rtrack{position:relative;height:14px;background:var(--key);border-radius:var(--r-s)}.rfill{height:100%;border-radius:var(--r-s)}.rcls{position:absolute;top:-3px;width:2px;height:20px;background:currentColor}
 .rcard h4{margin:14px 0 6px}.rsign{display:none;justify-content:space-between;margin-top:48px;font-size:12px}.rsign div{border-top:1px solid #000;padding-top:4px;width:28%;text-align:center}
+#marksheet{display:none}
+@page sheet-landscape{size:landscape;margin:10mm}
 @media print{
   .side,.top,.noprint,#toast,.nav,.tabbar,.offline{display:none!important}
   body,.app,main,.page{background:#fff!important;color:#000!important;display:block!important;margin:0!important;padding:0!important;height:auto!important;overflow:visible!important}
@@ -237,6 +240,38 @@ body.ws #toast{bottom:calc(330px + env(safe-area-inset-bottom))}
   .tbl th,.tbl td{color:#000!important;border-bottom:1px solid #999!important}
   .rtag,.rfill{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @page{margin:14mm}
+  body.printing-sheet > *:not(#marksheet){display:none!important}
+  body.printing-sheet{background:#fff!important;color:#000!important;margin:0!important;padding:0!important;height:auto!important;overflow:visible!important}
+  body.printing-sheet.sheet-landscape{page:sheet-landscape}
+  body.printing-sheet #marksheet{display:block!important;background:#fff!important;color:#000!important;box-shadow:none!important;font-size:10.5pt;line-height:1.35;margin:0!important;padding:0!important}
+  .msheet table{width:100%;border-collapse:collapse;margin:8px 0;font-size:10pt;background:#fff!important;box-shadow:none!important}
+  .msheet thead{display:table-header-group}
+  .msheet tr{page-break-inside:avoid;break-inside:avoid}
+  .msheet th,.msheet td{border:1px solid #333!important;padding:4px 6px;color:#000!important}
+  .msheet th{background:#f0f0f0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:700;text-align:center}
+  .msheet th:nth-child(3){text-align:left}
+  .msheet td.ms-name{text-align:left}
+  .msheet td.ms-c{text-align:center}
+  .msheet td.ms-tot{font-weight:700}
+  .msheet td.ms-st{font-weight:700}
+  .msheet td.ms-miss{color:#555!important}
+  .msheet .ms-head{border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:10px}
+  .msheet .ms-title{font-size:14pt;font-weight:800;margin-top:2px;text-align:center}
+  .msheet .ms-meta{display:flex;flex-wrap:wrap;gap:6px 20px;margin:8px 0;font-size:9.5pt}
+  .msheet .ms-meta small{display:block;opacity:.7;font-size:8pt;text-transform:uppercase;letter-spacing:.5px}
+  .msheet .ms-status{font-size:9.5pt;margin-top:4px}
+  .msheet .ms-unsaved{font-weight:700}
+  .msheet .ms-summary{margin-top:14px;page-break-inside:avoid;break-inside:avoid}
+  .msheet .ms-sum-title{font-size:11pt;font-weight:800;margin-bottom:4px}
+  .msheet .ms-sum-tbl{width:100%;border-collapse:collapse;font-size:9.5pt}
+  .msheet .ms-sum-tbl th,.msheet .ms-sum-tbl td{border:1px solid #333!important;padding:4px 6px;text-align:center}
+  .msheet .ms-sum-tbl td.ms-sum-subj{text-align:left}
+  .msheet .ms-sign{display:flex!important;justify-content:space-between;margin-top:36px;page-break-inside:avoid;break-inside:avoid;font-size:10pt}
+  .msheet .ms-sign div{border-top:1px solid #000;padding-top:4px;width:28%;text-align:center}
+  .msheet .ms-foot{font-size:8pt;color:#555;margin-top:14px;text-align:right}
+  .msheet .ms-watermark{position:fixed;top:45%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:72pt;font-weight:900;letter-spacing:4px;color:rgba(0,0,0,0.08);-webkit-print-color-adjust:exact;print-color-adjust:exact;pointer-events:none;z-index:9999;user-select:none;white-space:nowrap}
+  .msheet.many-cols table{font-size:8.5pt}
+  .msheet.many-cols th,.msheet.many-cols td{padding:2px 4px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 /* phone: quick type takes the full row; the table drops the admission no. so roll, name and marks fit */
