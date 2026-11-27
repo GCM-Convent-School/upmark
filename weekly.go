@@ -466,6 +466,7 @@ func (a *App) weeklyScheduler(ctx context.Context) {
 			log.Printf("weekly reports: %v", err)
 		}
 		a.db.Exec(`DELETE FROM parent_sessions WHERE expires_at<?`, nowStr())
+		a.db.Exec(`DELETE FROM sessions WHERE expires_at<?`, nowStr())
 		select {
 		case <-ctx.Done():
 			return

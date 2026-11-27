@@ -9,13 +9,16 @@ async function login(ident) {
   const r = await fetch(BASE + '/api/auth/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: ident }) });
   const { dev_code } = await r.json();
   const v = await fetch(BASE + '/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: ident, code: dev_code }) });
-  const cookie = v.headers.get('set-cookie').split(';')[0];
-  return async (method, path, body) => {
+  const rawCookie = v.headers.get('set-cookie') || '';
+  const cookie = rawCookie.split(';')[0];
+  const client = async (method, path, body) => {
     const res = await fetch(BASE + '/api' + path, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'rea', cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
     let data = {}; try { data = await res.json(); } catch {}
     const st = /dur=([\d.]+)/.exec(res.headers.get('server-timing') || '');
     return { status: res.status, data, ms: st ? +st[1] : null };
   };
+  client.setCookie = rawCookie;
+  return client;
 }
 const mock = async (p, body) => (await fetch(MOCK + p, { method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined })).json();
 const today = new Date().toISOString().slice(0, 10);
@@ -35,6 +38,8 @@ ok(r.status === 403, 'Teacher B cannot create a Punjabi test (403)');
 ok((await fetch(BASE + '/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: '9000000001', code: '000000' }) })).status === 401, 'Wrong OTP rejected');
 ok((await (await fetch(BASE + '/api/exams/1')).json()).error === 'Please sign in', 'Unauthenticated API call rejected');
 ok((await fetch(BASE + '/api/exams', { method: 'POST', body: '{}' })).status === 403, 'Missing CSRF header rejected');
+ok(A.setCookie.includes('rea_session=') && A.setCookie.includes('Max-Age=1296000'), 'Teacher sign-in sets rea_session with Max-Age=1296000');
+ok(admin.setCookie.includes('rea_session=') && admin.setCookie.includes('Max-Age=259200'), 'Admin sign-in sets rea_session with Max-Age=259200');
 
 console.log('Same-day subject rule');
 const base = { ...G8, category: 'Formative', sub_type: 'FA1', date: today };

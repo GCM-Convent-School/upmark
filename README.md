@@ -41,7 +41,7 @@ Offline: the shell is cached by a service worker, open sheets are kept on the ph
 connection returns. Locking a sheet needs a connection.
 
 Routing is by role on both the client and the API (`/api/admin/*` returns 403 for teachers, parent sessions reach only
-`/api/parent/*`).
+`/api/parent/*`). Staff stay signed in while they use the app — 15 days for teachers, 3 days for admins, renewed on use.
 
 ## Configuration (environment)
 

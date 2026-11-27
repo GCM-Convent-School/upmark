@@ -18,15 +18,34 @@ import (
 )
 
 type User struct {
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	Mobile string `json:"mobile"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
-	Active bool   `json:"active"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Mobile    string    `json:"mobile"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	Active    bool      `json:"active"`
+	ExpiresAt time.Time `json:"-"`
 }
 
 func (u *User) IsAdmin() bool { return u.Role == "admin" }
+
+// Staff stay signed in while they use the app: the session runs this long from the last use.
+// Admins get less, since their sessions can approve marks and change the SIS.
+func sessionTTL(u *User) time.Duration {
+	if u != nil && u.IsAdmin() {
+		return 3 * 24 * time.Hour
+	}
+	return 15 * 24 * time.Hour
+}
+
+// renewedExpiry: push the expiry to now+ttl once it has slipped a day (so a session is written at most
+// about once a day), or cut it to now+ttl when the role's limit got shorter (a teacher made admin).
+func renewedExpiry(stored, now time.Time, ttl time.Duration) (time.Time, bool) {
+	if stored.Before(now.Add(ttl-24*time.Hour)) || stored.After(now.Add(ttl)) {
+		return now.Add(ttl), true
+	}
+	return stored, false
+}
 
 type ctxKey struct{}
 
@@ -204,14 +223,19 @@ func (a *App) otpVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	a.db.Exec(`DELETE FROM otps WHERE identifier=?`, ident)
 	tok := randHex(32)
-	exp = time.Now().Add(12 * time.Hour).UTC().Format(time.RFC3339)
+	ttl := sessionTTL(u)
+	exp = time.Now().Add(ttl).UTC().Format(time.RFC3339)
 	if _, err := a.db.Exec(`INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)`, sha(tok), u.ID, exp); err != nil {
 		writeErr(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "rea_session", Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Secure: a.cfg.CookieSecure, MaxAge: 12 * 3600})
+	a.setSessionCookie(w, tok, ttl)
 	writeJSON(w, 200, map[string]any{"ok": true, "user": u})
+}
+
+func (a *App) setSessionCookie(w http.ResponseWriter, tok string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{Name: "rea_session", Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: a.cfg.CookieSecure, MaxAge: int(ttl.Seconds())})
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -230,12 +254,39 @@ func (a *App) userFromRequest(r *http.Request) *User {
 	}
 	u := &User{}
 	var mob, em sql.NullString
-	err = a.db.QueryRow(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active FROM sessions s JOIN users u ON u.id=s.user_id
-		WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`, sha(c.Value), nowStr()).Scan(&u.ID, &u.Name, &mob, &em, &u.Role, &u.Active)
+	var expStr string
+	err = a.db.QueryRow(`SELECT u.id,u.name,u.mobile,u.email,u.role,u.active,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id
+		WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`, sha(c.Value), nowStr()).Scan(&u.ID, &u.Name, &mob, &em, &u.Role, &u.Active, &expStr)
 	if err != nil {
 		return nil
 	}
 	u.Mobile, u.Email = mob.String, em.String
+	if t, err := time.Parse(time.RFC3339, expStr); err == nil {
+		u.ExpiresAt = t
+	} else if t, err := time.Parse(time.RFC3339Nano, expStr); err == nil {
+		u.ExpiresAt = t
+	}
+	return u
+}
+
+// userFromRequestRenew is userFromRequest for API calls: it also renews the session and its cookie.
+func (a *App) userFromRequestRenew(w http.ResponseWriter, r *http.Request) *User {
+	c, err := r.Cookie("rea_session")
+	if err != nil {
+		return nil
+	}
+	u := a.userFromRequest(r)
+	if u == nil {
+		return nil
+	}
+	ttl := sessionTTL(u)
+	if next, ok := renewedExpiry(u.ExpiresAt, time.Now().UTC(), ttl); ok {
+		expStr := next.UTC().Format(time.RFC3339)
+		if _, err := a.db.Exec(`UPDATE sessions SET expires_at=? WHERE token_hash=?`, expStr, sha(c.Value)); err == nil {
+			u.ExpiresAt = next
+			a.setSessionCookie(w, c.Value, ttl)
+		}
+	}
 	return u
 }
 
@@ -247,7 +298,7 @@ func (a *App) wrap(role string, h handler) http.HandlerFunc {
 			writeErr(w, forbidden("missing CSRF header"))
 			return
 		}
-		u := a.userFromRequest(r)
+		u := a.userFromRequestRenew(w, r)
 		if u == nil {
 			writeErr(w, &apiErr{Code: 401, Msg: "Please sign in"})
 			return
